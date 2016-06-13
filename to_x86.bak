@@ -1,46 +1,19 @@
 #lang racket
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;                                                          ;
-;                                                          ;
-;                                                          ;
-;                       Utilities                          ;
-;                                                          ;
-;                                                          ;
-;                                                          ;
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
 (define atom?
   (lambda (x)
     (and (not (null? x))
          (not (pair? x)))))
 
-(define nested?
-  (lambda (x)
-    (match x
-      [(? atom?) #f]
-      [else #t])))
-
-(define replace
-  (lambda (source old new)
-    (cond [(null? source) '()]
-          [(not (atom? (car source)))
-           (cons (replace (car source) old new) (replace (cdr source) old new))]
-          [(equal? (car source) old)
-           (cons new (replace (cdr source) old new))]
-          [else
-           (cons (car source) (replace (cdr source) old new))])))
-           
-        
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;                                                          ;
-;                                                          ;
-;                                                          ;
-;                       Main code                          ;
-;                                                          ;
-;                                                          ;
-;                                                          ;
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(define map2
+  (lambda (lst1 lst2 proc)
+    (if (not (= (length lst1)
+                (length lst2)))
+        (error "map2 unmatch list length")
+        (if (null? lst1)
+            '()
+            (cons (proc (car lst1) (car lst2)) (map2 (cdr lst1) (cdr lst2) proc))))))
+         
 
 (define uniquify
   (lambda (alist)
@@ -61,6 +34,14 @@
         [`(program ,e) `(program ,((uniquify alist) e))]
         [`(,op ,es ...) `(,op ,@(map (lambda (e) ((uniquify alist) e)) es))])))))
 
+
+
+(define nested?
+  (lambda (x)
+    (match x
+      [(? atom?) #f]
+      [else #t])))
+
 (define flatten
  (lambda (prog)
    (letrec ([x 0]
@@ -69,7 +50,6 @@
                               (string->symbol (string-append "temp." (number->string x)))))]
             [first-pass (lambda (prog)                                             
                           (match prog
-                            [(? symbol?) (values '() prog)]
                             [(? integer?) (let ([ret-temp (newtemp)]) (values `((assign ,ret-temp ,prog)) ret-temp))]
                             [`(- ,e) (let ([ret-temp (newtemp)]) (values `((assign ,ret-temp ,prog)) ret-temp))]
                             [`(+ ,e1 ,e2) (cond [(and (not (nested? e1)) (not (nested? e2)))
@@ -89,10 +69,11 @@
                                                     (let ([ret-temp (newtemp)])
                                                       (values `(,@stms1 ,@stms2 (assign ,ret-temp (+ ,temp1 ,temp2))) ret-temp)))])]
                             [`(let ([,var ,exp]) ,body)
-                             (let ([stms-temp (if (not (nested? exp))
+                             (let ([stms-temp (match exp
+                                                (if (not (nested? exp))
                                                     `((assign ,var ,exp))                                                   
                                                     (let-values ([(stms ret-ftemp) (first-pass exp)])
-                                                      (replace stms ret-ftemp var)))])
+                                                      stms)))])
                                (let-values ([(stms* ret-temp*) (first-pass body)])
                                (values `(,@stms-temp ,@stms*) ret-temp*)))]))]                    
             [collect-vars (lambda (stm-list)
@@ -110,20 +91,9 @@
          `(prog ,vars (,@stms (return ,ret-temp))))))))
 
        
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;                                                          ;
-;                                                          ;
-;                                                          ;
-;                         Test                             ;
-;                                                          ;
-;                                                          ;
-;                                                          ;
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
        
-(flatten '(let ([a 42])
-           (let ([b a])
-             b)))
+(flatten `(let ([x 11])
+           (+ x 41)))
 
 ((uniquify '()) '(program
                   (let ([x 32])
