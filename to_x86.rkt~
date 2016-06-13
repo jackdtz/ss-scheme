@@ -1,0 +1,49 @@
+#lang racket
+
+(define uniquify
+  (lambda (alist)
+    (lambda (e)
+      (letrec ([lookup (lambda (table key)
+                         (cond [(null? table) (error "key is not defined in table")]
+                               [(equal? key (caar table)) (cdr (car table))]
+                               [else (lookup (cdr table) key)]))])
+      (match e
+        [(? symbol?) (lookup alist e)]
+        [(? integer?) e]
+        [`(let ([,x ,e] ...) ,body) 
+         (let* ([new-x (map gensym x)]
+                [new-alist (append (map (lambda (t1 t2) (cons t1 t2)) x new-x))]
+                [new-e (map (lambda (ee) ((uniquify new-alist) ee)) e)]
+                [new-vars (map (lambda (x e) (list x e)) new-x new-e)])
+           `(let ,new-vars ,((uniquify new-alist) body)))]
+        [`(program ,e) `(program ,((uniquify alist) e))]
+        [`(,op ,es ...) `(,op ,@(map (lambda (e) ((uniquify alist) e)) es))])))))
+
+
+(define flatten
+ (lambda (prog)
+  (define helper
+   (lambda (prog collector)
+      (match prog
+       [`(let ([,x ,e] ...) ,body) to-do]
+       [`(,op ,es ...) to-do])))))
+
+
+
+((uniquify '()) '(program
+                  (let ([x 32])
+                    (+ (let ([x 10]) x) x))))
+
+((uniquify '()) '(program
+                  (let ([x (let ([x 4])
+                             (+ x 1))])
+                     (+ x 2))))
+
+((uniquify '()) '(program
+                  (let ([y 3]
+                        [x (let ([x 4])
+                             (+ x 1))]
+                        
+                        [z 9])
+                    (+ (+ x 2) x))))
+
