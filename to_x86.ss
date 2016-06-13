@@ -105,12 +105,22 @@
                                        [else (error prog)]))
                                    '()
                                    stm-list))])
-     (let-values ([(stms ret-temp) (first-pass prog)])
-       (let ([vars (collect-vars stms)])
-         `(prog ,vars (,@stms (return ,ret-temp))))))))
+     (match prog
+       [`(program ,e)
+        (let-values ([(stms ret-temp) (first-pass e)])
+          (let ([vars (collect-vars stms)])
+            `(prog ,vars (,@stms (return ,ret-temp)))))]
+       [else
+        (error "should not happend")]))))
+
+(define select-instruction
+  (lambda (prog)
+    ))
 
        
-
+(define compile
+  (lambda (prog)
+    (flatten ((uniquify '()) prog))))
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;                                                          ;
 ;                                                          ;
@@ -121,24 +131,19 @@
 ;                                                          ;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
        
-(flatten '(let ([a 42])
-           (let ([b a])
-             b)))
+(flatten '(program
+           (let ([a 42])
+             (let ([b a])
+               b))))
 
-((uniquify '()) '(program
-                  (let ([x 32])
-                    (+ (let ([x 10]) x) x))))
+(compile '(program
+           (let ([x 32])
+             (+ (let ([x 10]) x) x))))
 
-((uniquify '()) '(program
-                  (let ([x (let ([x 4])
-                             (+ x 1))])
-                     (+ x 2))))
+(compile '(program
+  (let ([x (let ([x 4])
+             (+ x 1))])
+    (+ x 2))))
 
-((uniquify '()) '(program
-                  (let ([y 3]
-                        [x (let ([x 4])
-                             (+ x 1))]
-                        
-                        [z 9])
-                    (+ (+ x 2) x))))
+
 
