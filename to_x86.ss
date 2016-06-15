@@ -113,12 +113,35 @@
        [else
         (error "should not happend")]))))
 
-(define select-instruction
-  (lambda (prog)
-    ))
+ (define select-instructions
+   (lambda (prog)
+     (letrec ([iterate (lambda (stms instr-select)
+                         (if (null? stms)
+                           '()
+                           (cons (instr-select (car stms)) (iterate (cdr stms) instr-select))))]
+              [instr-select (lambda (stm)
+                              (match stm
+                                     [`(assign ,e1 (+ ,n1 ,n2)) (cond [(and (integer? n1) (integer? n2))
+                                                                        `((movq (int ,n1) (var ,e1)) (addq (int ,n2) (var ,e1)))]
+                                                                      [(and (integer? n1) (symbol? n2) 
+                                                                          `((addq (int ,n1) (var ,n2))))]
+                                                                      [(and (symbol? n1) (integer? n2))
+                                                                        `((addq (int ,n2) (var ,n1)))]
+                                                                      [(and (symbol? n1) (symbol? n2)) 
+                                                                        `((addq (var ,n1) (var ,n2)))])]
+                                     [`(assign ,e1 (read)) `((callq read_int) (movq (reg rax) (var ,e1)))]
+                                     [`(assign ,e1 ,e2) `((movq (var ,e2) (var ,e1)))]
+                                     [`(return ,e) `((movq (reg rax) (var ,e)))]))])
+     (match prog
+       [`(prog ,vars ,stms) `(prog ,vars ,(iterate stms instr-select))]
+       [else (error "Unkown prog in select-instruction")]))))
 
        
 (define compile
+  (lambda (prog)
+    (select-instructions (flatten ((uniquify '()) prog)))))
+
+(define compile1
   (lambda (prog)
     (flatten ((uniquify '()) prog))))
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -131,12 +154,16 @@
 ;                                                          ;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
        
-(flatten '(program
+(compile '(program
            (let ([a 42])
              (let ([b a])
                b))))
 
 (compile '(program
+           (let ([x 32])
+             (+ (let ([x 10]) x) x))))
+
+(compile1 '(program
            (let ([x 32])
              (+ (let ([x 10]) x) x))))
 
