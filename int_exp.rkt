@@ -58,6 +58,59 @@
          `(program ,e-vars ,@(append e-stms `((return ,e-exp)))))]
       [else (error "Flatten could not match " e)]))))
   
+
+   (define bin-op->instr
+     (lambda (op)
+       (match op
+         ['+ 'addq]
+         [else
+          (error "bin-op->instr could not match " op)])))
+
+   (define unary-op->instr
+     (lambda (op)
+       (match op
+         ['- 'negq]
+         [else
+          (error "unary-op->instr could not match " op)])))
+
+   
+   (define/public select-instructions
+     (lambda (e)
+       (match e
+         [(? symbol?) `(var ,e)]
+         [(? integer?) `(int ,e)]
+         [`(return ,e) (select-instructions `((assign (reg rax) ,e)))]
+         [`(assign ,lhs (read))
+          `((callq read_int) (movq (reg rax) ,(select-instructions lhs)))]
+         [`(assign ,lhs ,rhs) #:when (symbol? rhs)
+                              (let ([new-lhs (select-instructions lhs)])
+                                (cond [(equal? new-lhs `(var ,rhs)) '()]
+                                      [else `((movq (var ,rhs) ,new-lhs))]))]
+         [`(assign ,lhs ,rhs) #:when (integer? rhs)
+                              (let ([new-lhs (select-instructions lhs)])
+                                `((movq (int ,rhs) ,new-lhs)))]
+         [`(assign ,lhs (,op ,e1 ,e2))
+          (let ([new-lhs (select-instructions lhs)]
+                [new-e1 (select-instructions e1)]
+                [new-e2 (select-instructions e2)]
+                [instr (bin-op->instr op)])
+            (cond [(equal? new-lhs new-e1) `((,instr ,new-e2 ,new-lhs))]
+                  [(equal? new-lhs new-e2) `((,instr ,new-e1 ,new-lhs))]
+                  [else
+                   `((movq ,new-e1 ,new-lhs) (,instr ,new-e2 ,new-lhs))]))]
+         [`(assign ,lhs (,op ,e))
+          (let ([new-lhs (select-instructions lhs)]
+                [new-e (select-instructions e)]
+                [instr (unary-op->instr op)])
+            (if (equal? new-lhs new-e)
+                `((,instr new-lhs))
+                `((movq ,new-e ,new-lhs) (,instr ,new-lhs))))]
+         [`(program ,vars ,stms ...)
+          (let ([new-stms (map (lambda (s) (select-instructions s)) stms)])
+            `(program ,vars ,@(append* new-stms)))]
+         [else (error "R0/instruction selection, unmatch " e)])))
+
+  
   
   ))
 
@@ -83,8 +136,10 @@
 (define compiler (new compile-R0))
 
 (define c (send compiler flatten #t ))
-
 (c `(program (+ 32 10)))
+(send compiler select-instructions (c `(program (+ 32 10))))
+
+
 
        
 
