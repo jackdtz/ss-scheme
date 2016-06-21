@@ -117,7 +117,7 @@
 ;; Passes
 (define int-exp-passes
   (let ([compiler (new compile-R0)]
-  [interp (new interp-R0)])
+        [interp (new interp-R0)])
     (list 
     `("uniquify" ,(send compiler uniquify '())
       ,interp-scheme)

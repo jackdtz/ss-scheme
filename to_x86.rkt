@@ -1,14 +1,19 @@
 #lang racket
 
+(require "utilities.rkt")
+(require "interp.rkt")
+
 (define primitive-set
   (set '+ '- 'read))
+
+(define instruction-set
+  (set 'addq 'negq 'movq 'subq))
 
 (define (align n alignment)
   (cond [(eq? 0 (modulo n alignment)) n]
         [else
          (+ n (- alignment (modulo n alignment)))]))
          
-
 (define uniquify
   (lambda (env)
     (lambda (e)
@@ -104,95 +109,93 @@
          `(program ,vars ,@(append* new-stms)))]
       [else (error "R0/instruction selection, unmatch " e)])))
 
-;#|
 (define assign-homes
   (lambda (hash)
     (lambda (e)
-      [`(program (,vars ...) ,stms ...)
-       (define word-size 8)
-       (define first-offset 8)
-       (define (make-stack-loc n)
-         `(dref (- (+ first-offset
-                      (* word-size n)))))
-       
-       (define hash-tbl
-         (make-hash (map cons vars
-                         (map make-stack-loc
-                              (stream->list (in-range 0 (length vars)))))))
-       
-       (define stack-space
-         (align (* (length vars) word-size)
-                16))
-       
-       `(program stack-space
-                 ,@(map (assign-homes hash-tbl) stms))]
-      [`(int ,i) `(int ,i)]
-      [`(reg ,r) `(reg ,r)]
-      [`(var ,x) (hash-ref hash x)]
-      [`(,instr ,es ...)
-       #:when (set-member? instruction-set instr)
-       `(,instr ,@(map (assign-homes hash-tbl) es))]
-      [else
-       (error "assign-homes could not match " e)])))
-       
-;|#    
-(define assign-homes
-    (lambda (e)
-      (letrec ([stack-index 0] 
-               [new-index (lambda () (begin (set! stack-index (- stack-index 8)) stack-index))] 
-               [iterate (lambda (stms env) 
-                        (cond [(null? stms) (values '() env)]
-                              [else
-                               (let*-values ([(new-stm new-env) (helper (car stms) env)]
-                                             [(rest-stms rest-env) (iterate (cdr stms) new-env)])
-                                 (values (cons new-stm rest-stms) rest-env))]))]             
-             [helper 
-              (lambda (e env)
-                (match e
-                  [`(program ,vars ,stms ...)
-                   (let-values ([(new-stms new-env) (iterate stms env)])
-                     (values `(program ,vars ,@new-stms) new-env))]
-                  [`(int ,i) (values e env)]
-                  [`(reg ,r) (values e env)]
-                  [`(var ,x) (if (assq x env)
-                                 (values (cadr (assq x env)) env)
-                                 (let ([mem-def `(deref rbp ,(new-index))])
-                                   (values mem-def (cons `(,x ,mem-def) env))))]
-                  [`(,un-op ,dst)
-                   (let-values ([(new-dst new-env) (helper dst env)])
-                     (values `(,un-op ,new-dst) new-env))]
-                  [`(,bin-op ,src ,dst) 
-                   (let*-values ([(new-src new-env) (helper src env)]
-                                 [(new-dst new-env*) (helper dst new-env)])
-                     (values `(,bin-op ,new-src ,new-dst) new-env*))]))])
-      (let-values ([(stms env) (helper e '())])
-        stms))))
+      (match e
+        [`(program (,vars ...) ,stms ...)
+         (define word-size 8)
+         (define first-offset 8)
+         (define (make-stack-loc n)
+           `(deref rbp ,(- (+ first-offset
+                             (* word-size n)))))
+         (define hash-tbl
+           (make-hash (map cons vars
+                           (map make-stack-loc
+                                (stream->list (in-range 0 (length vars)))))))
+         (define stack-space
+           (align (* (length vars) word-size)
+                  16))
+         
+         `(program ,stack-space
+                   ,@(map (assign-homes hash-tbl) stms))]
+        [`(int ,i) e]
+        [`(reg ,r) e]
+        [`(callq read_int) e]
+        [`(var ,x) (hash-ref hash x)]
+        [`(,instr ,es ...)
+         #:when (set-member? instruction-set instr)
+         `(,instr ,@(map (assign-homes hash) es))]
+        [else
+         (error "assign-homes could not match " e)]))))
+
+
+(define patch-instructions
+ (lambda (e)
+
+  (define in-memory
+   (lambda (x)
+    (match x
+     [`(deref rbp ,n) #t]
+     [else #f])))
+
+  (match e
+   [`(program ,frame-size ,instr ...)
+    `(program ,frame-size ,@(map patch-instructions instr))]
+   [`(,instr (deref rbp ,offset1) (deref rbp ,offset2))
+    #:when (set-member? instruction-set instr)
+    `((movq (deref rbp ,offset1) (reg rax)) (,instr (reg rax) (deref rbp ,offset2)))]
+   [else e])))
+  
+
 
 (define compile 
   (lambda (e)
     (let* ([uniq ((uniquify '()) e)]
            [flat ((flatten #t) uniq)]
-           [instrs (select-instructions flat)])
-;           [homes (assign-homes instrs)])
-      instrs)))
+           [instrs (select-instructions flat)]
+           [homes ((assign-homes void) instrs)]
+           [patched (patch-instructions homes)])
+      patched)))
+
+(define passes
+ (list
+  `("uniquify"              ,(uniquify '())          ,interp-scheme)
+  `("flatten"               ,(flatten #f)            ,interp-C)
+  `("instruction selection" ,select-instructions     ,interp-x86)
+  `("assign homes"          ,(assign-homes (void))   ,interp-x86)
+  `("insert spill code"     ,patch-instructions      ,interp-x86)
+ ))
 
 
+(define compiler-list
+  ;; Name           Typechecker               Compiler-Passes      Initial interpreter  Valid suites
+  `(("int_exp"      #f                        ,passes               ,interp-scheme       "s0" ,(range 1 28))
+    ;("reg_int_exp"  #f                        ,reg-int-exp-passes  ,interp-scheme       (0))
+    ;("conditionals" ,conditionals-typechecker ,conditionals-passes ,interp-scheme       (0 1))
+    ;("vectors"      ,vectors-typechecker      ,vectors-passes      ,interp-scheme       (0 1 2))
+    ;("functions"    ,functions-typechecker    ,functions-passes    ,interp-scheme       (0 1 2 3))
+    ;("lambda"       ,lambda-typechecker       ,lambda-passes       ,interp-scheme       (0 1 2 3 4))
+    ;("any"          ,R6-typechecker           ,R6-passes           ,interp-scheme       (0 1 2 3 4 6))
+    ;("dynamic"      #f                        ,R7-passes           ,(interp-r7 '())     (7))
+    ))
 
-; '(program (temp313 temp312) 
-;     (movq (int 10) (var temp312)) 
-;     (negq (var temp312)) 
-;     (movq (int 52) (var temp313)) 
-;     (addq (var temp312) (var temp313)) 
-;     (movq (var temp313) (reg rax)))
+(compile 
+ '(program (let ([a 42])
+            (let ([b a])
+              b))))
 
-; '(program (temp378 temp377) 
-;           (movq (int 10) (deref rbp -8)) 
-;           (negq (deref rbp -16)) 
-;           (movq (int 52) (deref rbp -24)) 
-;           (addq (deref rbp -32) (deref rbp -40)) 
-;           (movq (deref rbp -48) (reg rax)))
+(for ([test compiler-list])
+ (apply interp-tests test))
 
 
-(compile '(program (+ 52 (- 10))))
-
-; (foldl + 0 '(1 2 3 4 5))
