@@ -143,20 +143,64 @@
 (define patch-instructions
  (lambda (e)
 
-  (define in-memory
+  (define in-memory?
    (lambda (x)
     (match x
      [`(deref rbp ,n) #t]
      [else #f])))
 
   (match e
-   [`(program ,frame-size ,instr ...)
-    `(program ,frame-size ,@(map patch-instructions instr))]
-   [`(,instr (deref rbp ,offset1) (deref rbp ,offset2))
-    #:when (set-member? instruction-set instr)
-    `((movq (deref rbp ,offset1) (reg rax)) (,instr (reg rax) (deref rbp ,offset2)))]
-   [else e])))
+    [`(program ,frame-size ,instr ...)
+    `(program ,frame-size ,@(append* (map patch-instructions instr)))]
+    
+    [`(,instr ,src ,dst)
+     #:when (set-member? instruction-set instr)
+     (cond [(and (in-memory? src) (in-memory? dst))
+            `((movq ,src (reg rax)) (,instr (reg rax) ,dst))]
+           [else `((,instr ,src ,dst))])]
+    [`(movq ,src ,dst)
+     (cond [(equal? src dst) '()]
+           [(and (in-memory? src) (in-memory? dst))
+            `((movq ,src (reg rax)) (movq (reg rax) ,dst))]
+           [else `((movq ,src ,dst))])]
+    [else `(,e)])))
   
+  
+(define print-x86
+  (lambda (e)
+    (match e
+      [`(deref ,reg ,r) (format "~a(%~a)" r reg)]
+      [`(int ,n) (format "$~a" n)]
+      [`(reg ,r) (format "%~a" r)]
+      [`(callq ,f)
+       (format "\tcallq\t~a\n" (label-name (symbol->string f)))]
+      [`(,instr ,src ,dst)
+       #:when (set-member? instruction-set instr)
+       (format "\t~a\t~a, ~a\n" instr 
+                                (print-x86 src)
+                                (print-x86 dst))]
+      [`(,instr ,dst)
+       #:when (set-member? instruction-set instr)
+       (format "\t~a\t~a\n" instr (print-x86 dst))]
+      
+      [`(program ,stack-space ,instrs ...)
+       (string-append
+         (format "\t.globl ~a\n" (label-name "main"))
+         (format "~a:\n" (label-name "main"))
+         (format "\tpushq\t%rbp\n")
+         (format "\tmovq\t%rsp, %rbp\n")
+         (format "\tsubq\t$~a, %rbp\n" stack-space)
+         "\n"
+         (string-append* (map print-x86 instrs))
+         "\n"
+         (format "\tmovq\t%rax, %rdi\n")
+         (format "\tcallq\t~a\n" (label-name "print_int"))
+         (format "\tmovq\t$0, %rax\n")
+         (format "\taddq\t$~a, %rsp\n" stack-space)
+         (format "\tpopq\t%rbp\n")
+         (format "\tretq\n"))]
+      
+      [else (error "print-x86 unmatched " e)])))
 
 
 (define compile 
@@ -165,8 +209,9 @@
            [flat ((flatten #t) uniq)]
            [instrs (select-instructions flat)]
            [homes ((assign-homes void) instrs)]
-           [patched (patch-instructions homes)])
-      patched)))
+           [patched (patch-instructions homes)]
+           [x86 (print-x86 patched)])
+      (display x86))))
 
 (define passes
  (list
