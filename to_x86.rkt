@@ -189,7 +189,7 @@
          (format "~a:\n" (label-name "main"))
          (format "\tpushq\t%rbp\n")
          (format "\tmovq\t%rsp, %rbp\n")
-         (format "\tsubq\t$~a, %rbp\n" stack-space)
+         (format "\tsubq\t$~a, %rsp\n" stack-space)
          "\n"
          (string-append* (map print-x86 instrs))
          "\n"
@@ -211,7 +211,10 @@
            [homes ((assign-homes void) instrs)]
            [patched (patch-instructions homes)]
            [x86 (print-x86 patched)])
-      (display x86))))
+     (define out (open-output-file #:exists 'replace 
+                                   "test.s"))
+     (display x86 out)
+     (close-output-port out))))
 
 (define passes
  (list
@@ -236,9 +239,7 @@
     ))
 
 (compile 
- '(program (let ([a 42])
-            (let ([b a])
-              b))))
+ '(program (+ 33 19)))
 
 (for ([test compiler-list])
  (apply interp-tests test))

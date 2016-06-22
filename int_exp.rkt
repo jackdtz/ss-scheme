@@ -135,9 +135,14 @@
 
 (define compiler (new compile-R0))
 
-(define c (send compiler flatten #t ))
-(c `(program (+ 32 10)))
-(send compiler select-instructions (c `(program (+ 32 10))))
+(define uniquify (send compiler uniquify '()))
+(define flatten (send compiler flatten #t ))
+(define inst-sel (send compiler select-instructions))
+(define ass-homes (send compiler assign-homes (void)))
+(define patch (send compiler patch-instructions))
+(define x86 (send compiler print-x86))
+  
+(x86 (patch (ass-homes (inst-sel (flatten (uniquify '(program (+ 33 19))))))))
 
 
 
