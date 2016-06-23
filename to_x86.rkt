@@ -109,6 +109,43 @@
          `(program ,vars ,@(append* new-stms)))]
       [else (error "R0/instruction selection, unmatch " e)])))
 
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;                                                      ;
+;                                                      ;
+;                 Register Allocation                  ;
+;                                                      ;
+;                                                      ;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(define liveness
+ (lambda (orgin-live-after)
+  (lambda (old-instrs)
+   (let loop ([instrs (reverse old-instrs)]
+              [live-after origin-live-after]
+              [lives (list origin-live-after)]
+              [new-instrs '()])
+    (cond [(null? instrs) (values new-instrs lives)]
+          [else
+            (let-values ([(new-instrs new-live-after) ((uncover-live ))]))]
+          
+     
+     )
+   
+   )))
+
+(define uncover-live
+  (lambda (live-after) 
+   (lambda (e)
+    (match e
+     [`(program ,vars ,instrs) 
+      (let-values ([(new-instrs new-live-after) ((liveness (set)) instrs)])
+        `(program (,vars ,new-live-after) ,new-instrs))]
+     [else
+      (values e (set-union (set-subtract live-after
+                                         (write-vars e))
+                           (read-vars e)))]))))
+
 (define assign-homes
   (lambda (hash)
     (lambda (e)
