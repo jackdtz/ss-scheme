@@ -118,21 +118,36 @@
 ;                                                      ;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+(define free-var
+  (lambda (e)
+    (match e
+      [`(var ,x) (set x)]
+      [else (set)])))
+
+(define write-vars
+  (lambda (ast)
+    (match ast
+      [`(,instr ,src ,dst) #:when (set-member? instruction-set instr)
+       (free-var dst)]
+      [`(negq ,x) (free-var x)]
+      [`(callq ,f) caller-save]
+      [else (erro "")]
+
+
 (define liveness
  (lambda (orgin-live-after)
   (lambda (old-instrs)
-   (let loop ([instrs (reverse old-instrs)]
-              [live-after origin-live-after]
-              [lives (list origin-live-after)]
-              [new-instrs '()])
-    (cond [(null? instrs) (values new-instrs lives)]
+
+   (define (loop instrs live-after all-lives instrs-col)
+    (cond [(null? instrs) (values instrs-col all-lives)]
           [else
-            (let-values ([(new-instrs new-live-after) ((uncover-live ))]))]
-          
-     
-     )
+            (let-values ([(new-instr new-live-after) ((uncover-live live-after) (car instrs))])
+              (loop (cdr instrs) 
+                    new-live-after 
+                    (cons new-live-after all-lives) 
+                    (cons new-instr instrs-col)))]))
    
-   )))
+   (loop (reverse old-instrs) origin-live-after (list origin-live-after) '()))))
 
 (define uncover-live
   (lambda (live-after) 
@@ -245,12 +260,14 @@
     (let* ([uniq ((uniquify '()) e)]
            [flat ((flatten #t) uniq)]
            [instrs (select-instructions flat)]
-           [homes ((assign-homes void) instrs)]
-           [patched (patch-instructions homes)]
-           [x86 (print-x86 patched)])
+           )
+           ; [homes ((assign-homes void) instrs)]
+           ; [patched (patch-instructions homes)]
+           ; [x86 (print-x86 patched)])
      (define out (open-output-file #:exists 'replace 
                                    "test.s"))
-     (display x86 out)
+     (display instrs out)
+     ; (display x86 out)
      (close-output-port out))))
 
 (define passes
@@ -276,7 +293,9 @@
     ))
 
 (compile 
- '(program (+ 33 19)))
+ '(program (let ([x (+ 3 (- 1))])
+              (let ([y 9])
+                (+ x (+ y 3))))))
 
 (for ([test compiler-list])
  (apply interp-tests test))

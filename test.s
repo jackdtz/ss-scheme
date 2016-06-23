@@ -1,16 +1,1 @@
-	.globl _main
-_main:
-	pushq	%rbp
-	movq	%rsp, %rbp
-	subq	$16, %rsp
-
-	movq	$33, -8(%rbp)
-	addq	$19, -8(%rbp)
-	movq	-8(%rbp), %rax
-
-	movq	%rax, %rdi
-	callq	_print_int
-	movq	$0, %rax
-	addq	$16, %rsp
-	popq	%rbp
-	retq
+(program (x9940 temp9945 y9941 temp9947 temp9946) (movq (int 1) (var temp9945)) (negq (var temp9945)) (movq (int 3) (var x9940)) (addq (var temp9945) (var x9940)) (movq (int 9) (var y9941)) (movq (var y9941) (var temp9946)) (addq (int 3) (var temp9946)) (movq (var x9940) (var temp9947)) (addq (var temp9946) (var temp9947)) (movq (var temp9947) (reg rax)))
