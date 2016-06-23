@@ -9,6 +9,8 @@
 (define instruction-set
   (set 'addq 'negq 'movq 'subq))
 
+(define caller-save (set 'rdx 'rcx 'rsi 'rdi 'r8 'r9 'r10))
+
 (define (align n alignment)
   (cond [(eq? 0 (modulo n alignment)) n]
         [else
@@ -131,11 +133,18 @@
        (free-var dst)]
       [`(negq ,x) (free-var x)]
       [`(callq ,f) caller-save]
-      [else (erro "")]
+      [else (error "write-vars could not match " ast)])))
+
+(define read-vars
+  (lambda (ast)
+    (match ast
+      [`(movq ,src ,dst) (free-var src)]
+      [(or `(addq ,src ,dst) `(subq ,src ,dst) `(imul ,src ,dst))
+       (set-union (free-var src) (free-var dst))])))
 
 
 (define liveness
- (lambda (orgin-live-after)
+ (lambda (origin-live-after)
   (lambda (old-instrs)
 
    (define (loop instrs live-after all-lives instrs-col)
