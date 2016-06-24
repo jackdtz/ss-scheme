@@ -124,7 +124,9 @@
   (lambda (e)
     (match e
       [`(var ,x) (set x)]
-      [else (set)])))
+      [`(reg ,r) (set r)]
+      [`(int ,i) (set)]
+      [else (error "unhandled case " e)])))
 
 (define write-vars
   (lambda (ast)
@@ -140,21 +142,25 @@
     (match ast
       [`(movq ,src ,dst) (free-var src)]
       [(or `(addq ,src ,dst) `(subq ,src ,dst) `(imul ,src ,dst))
-       (set-union (free-var src) (free-var dst))])))
+       (set-union (free-var src) (free-var dst))]
+      [`(negq ,x) (free-var x)]
+      [else
+       (error "read-vars could not match " ast)])))
 
 
 (define liveness
  (lambda (origin-live-after)
   (lambda (old-instrs)
 
-   (define (loop instrs live-after all-lives instrs-col)
-    (cond [(null? instrs) (values instrs-col all-lives)]
-          [else
-            (let-values ([(new-instr new-live-after) ((uncover-live live-after) (car instrs))])
-              (loop (cdr instrs) 
-                    new-live-after 
-                    (cons new-live-after all-lives) 
-                    (cons new-instr instrs-col)))]))
+   (define loop 
+    (lambda (instrs live-after all-lives instrs-col)
+      (cond [(null? instrs) (values instrs-col all-lives)]
+            [else
+              (let-values ([(new-instr new-live-after) ((uncover-live live-after) (car instrs))])
+                (loop (cdr instrs) 
+                      new-live-after 
+                      (cons new-live-after all-lives) 
+                      (cons new-instr instrs-col)))])))
    
    (loop (reverse old-instrs) origin-live-after (list origin-live-after) '()))))
 
@@ -162,13 +168,55 @@
   (lambda (live-after) 
    (lambda (e)
     (match e
-     [`(program ,vars ,instrs) 
+     [`(program ,vars ,instrs ...) 
       (let-values ([(new-instrs new-live-after) ((liveness (set)) instrs)])
         `(program (,vars ,new-live-after) ,new-instrs))]
      [else
       (values e (set-union (set-subtract live-after
                                          (write-vars e))
                            (read-vars e)))]))))
+
+
+(define build-interference
+  (lambda (live-after graph)
+    (lambda (ast)
+      (match ast
+        
+       [`(program (,vars ,lives) ,instrs)
+        (let ([graph (make-graph vars)])
+          (let ([new-instrs
+                 (for/list ([inst instrs] [live-after lives])
+                           ((build-interference live-after graph) inst))])
+            `(program (,vars ,graph) ,@new-instrs)))]
+        
+        [`(movq ,src ,dst) 
+         (begin
+           (for ([v live-after])
+                (for ([d (free-var dst)]
+                      #:when (not (and (equal? d v) (equal? `(var ,v) src))))
+                     (add-edge graph d v)))
+           ast)]
+        
+        [`(callq ,label) 
+         (begin 
+           (for ([v live-after])
+                (for ([r caller-save] #:when (not (equal? v r)))
+                     (add-edge graph v r)))
+           ast)]
+        
+        [else
+         (begin
+           (for ([v live-after])
+                (for ([d (write-vars ast)] #:when (not (equal? v d)))
+                     (add-edge graph v d)))
+           ast)]))))
+
+
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
 
 (define assign-homes
   (lambda (hash)
@@ -269,15 +317,17 @@
     (let* ([uniq ((uniquify '()) e)]
            [flat ((flatten #t) uniq)]
            [instrs (select-instructions flat)]
-           )
+           [liveness ((uncover-live (void)) instrs)]
+           [graph ((build-interference (void) (void)) liveness)])
+     liveness)))
            ; [homes ((assign-homes void) instrs)]
            ; [patched (patch-instructions homes)]
            ; [x86 (print-x86 patched)])
-     (define out (open-output-file #:exists 'replace 
-                                   "test.s"))
-     (display instrs out)
-     ; (display x86 out)
-     (close-output-port out))))
+     #|(define out (open-output-file #:exists 'replace |#
+                                   #|"test.s"))|#
+     #|(display instrs out)|#
+     #|(display x86 out)|#
+     #|(close-output-port out))))|#
 
 (define passes
  (list
@@ -302,9 +352,13 @@
     ))
 
 (compile 
- '(program (let ([x (+ 3 (- 1))])
-              (let ([y 9])
-                (+ x (+ y 3))))))
+ '(program
+   (let ([v 1])
+     (let ([w 46])
+       (let ([x (+ v 7)])
+         (let ([y (+ 4 x)])
+           (let ([z (+ x w)])
+             (+ z (- y)))))))))
 
 (for ([test compiler-list])
  (apply interp-tests test))
