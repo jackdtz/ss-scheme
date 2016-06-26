@@ -487,7 +487,7 @@
            [patched (patch-instructions reg-alloc)]
            [x86 (print-x86 patched)])
       (define out (open-output-file #:exists 'replace 
-                                    "test.s"))
+                                    "assembly/output.s"))
       (display x86 out)
       (close-output-port out)
       patched)))
