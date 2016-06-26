@@ -1,1 +1,0 @@
-(project (inject #t Boolean) Boolean)
