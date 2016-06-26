@@ -1,8 +1,8 @@
 #lang racket
 
 (require data/heap)
-(require "utilities.rkt")
-(require "interp.rkt")
+(require "utilities/utilities.rkt")
+(require "utilities/interp.rkt")
 
 (define primitive-set
   (set '+ '- 'read))
