@@ -1,1 +1,23 @@
-(program (x10022 temp10027 y10023 temp10029 temp10028) (movq (int 1) (var temp10027)) (negq (var temp10027)) (movq (int 3) (var x10022)) (addq (var temp10027) (var x10022)) (movq (int 9) (var y10023)) (movq (var y10023) (var temp10028)) (addq (int 3) (var temp10028)) (movq (var x10022) (var temp10029)) (addq (var temp10028) (var temp10029)) (movq (var temp10029) (reg rax)))
+	.globl _main
+_main:
+	pushq	%rbp
+	movq	%rsp, %rbp
+	subq	$0, %rsp
+
+	movq	$1, %rcx
+	movq	$46, %rbx
+	addq	$7, %rcx
+	movq	%rcx, %rdx
+	addq	$4, %rdx
+	addq	%rbx, %rcx
+	movq	%rdx, %rbx
+	negq	%rbx
+	addq	%rbx, %rcx
+	movq	%rcx, %rax
+
+	movq	%rax, %rdi
+	callq	_print_int
+	movq	$0, %rax
+	addq	$0, %rsp
+	popq	%rbp
+	retq
