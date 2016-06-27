@@ -34,7 +34,7 @@
 (define type-boolean? (lambda (x) (equal? x 'Boolean)))
 (define same-type? (lambda (x y) (equal? x y)))
 
-
+#|
 (define type-checker
   (lambda (env)
     (lambda (ast)
@@ -73,7 +73,7 @@
                  [(type-boolean? cmp) (error "thn and els have different type" ast t f type-t type-f)]
                  [])
 
-
+|#
          
 (define uniquify
   (lambda (env)
@@ -304,7 +304,7 @@
                                         interfered)]
            [non-interfered-alloc (filter (lambda (var) (hash-has-key? col-map var))
                                          (set->list non-interfered))])
-      (cond [(not (null? non-interfered-alloc)) (car non-interfered-alloc)]
+      (cond [(not (null? non-interfered-alloc)) (hash-ref col-map (car non-interfered-alloc))]
             [(null? satu) 0]
             [(null? (cdr satu)) (if (= 0 (car satu)) 1 0)]
             [else
@@ -421,6 +421,7 @@
          (let* ([annot-graph (annotate graph)]
                 [color-map ((color-graph annot-graph mgraph) vars)])
            (let-values ([(reg-map stk-size) (reg-spill color-map)])
+;             (list graph color-map))]
              `(program ,stk-size ,@(map (lambda (instr) ((allocate-registers reg-map) instr)) instrs))))]
         [`(var ,x) (hash-ref color-map x)]
         [`(int ,i) `(int ,i)]
@@ -544,15 +545,14 @@
            [flat ((flatten #t) uniq)]
            [instrs (select-instructions flat)]
            [liveness ((uncover-live (void)) instrs)]
-           [graph ((build-interference (void) (void)) liveness)]
+           [graph ((build-interference (void) (void) (void)) liveness)]
            [reg-alloc ((allocate-registers (void)) graph)]
            [patched (patch-instructions reg-alloc)]
            [x86 (print-x86 patched)])
-      (define out (open-output-file #:exists 'replace 
-                                    "assembly/output.s"))
+      (define out (open-output-file #:exists 'replace "assembly/output.s"))
       (display x86 out)
       (close-output-port out)
-      patched)))
+      (display x86))))
 
 (define passes
  (list
