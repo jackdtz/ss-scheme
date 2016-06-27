@@ -194,16 +194,21 @@
 
 
 (define build-interference
-  (lambda (live-after graph)
+  (lambda (live-after graph mgraph)
+    
+    (define var? (lambda (x) (equal? (car x) 'var)))
+    (define get-var (lambda (x) (cadr x)))
+    
     (lambda (ast)
       (match ast
         
        [`(program (,vars ,lives) ,instrs)
-        (let ([graph (make-graph vars)])
+        (let ([graph (make-graph vars)]
+              [mgraph (make-graph vars)])
           (let ([new-instrs
                  (for/list ([inst instrs] [live-after lives])
-                           ((build-interference live-after graph) inst))])
-            `(program (,vars ,graph) ,@new-instrs)))]
+                           ((build-interference live-after graph mgraph) inst))])
+            `(program (,vars ,graph ,mgraph) ,@new-instrs)))]
         
         [`(movq ,src ,dst) 
          (begin
@@ -211,6 +216,8 @@
                 (for ([d (free-var dst)]
                       #:when (not (or (equal? d v) (equal? `(var ,v) src))))
                      (add-edge graph d v)))
+           (cond [(and (var? src) (var? dst)) (add-edge mgraph (get-var src)
+                                                               (get-var dst))])
            ast)]
         
         [`(callq ,label) 
@@ -236,15 +243,21 @@
      (lambda (k v) (hash-set! graph k `(,v ,(set)))))
     graph))
 
-(define lowest-missing-num
-  (lambda (lst)
-    (cond [(null? lst) 0]
-          [(null? (cdr lst)) (if (= 0 (car lst)) 1 0)]
-          [else
-           (let ([diff 
-                  (set-subtract (apply set (range 0 (+ 2 (apply max lst))))
-                                (list->set lst))])
-             (car (sort (set->list diff) <)))])))
+(define choose-color
+  (lambda (var interfered mgraph col-map satu)
+    (let* ([move-related-vars (hash-ref mgraph var)]
+           [non-interfered (set-subtract move-related-vars
+                                        interfered)]
+           [non-interfered-alloc (filter (lambda (var) (hash-has-key? col-map var))
+                                         (set->list non-interfered))])
+      (cond [(not (null? non-interfered-alloc)) (car non-interfered-alloc)]
+            [(null? satu) 0]
+            [(null? (cdr satu)) (if (= 0 (car satu)) 1 0)]
+            [else
+             (let ([diff 
+                    (set-subtract (apply set (range 0 (+ 2 (apply max satu))))
+                                  (list->set satu))])
+               (car (sort (set->list diff) <)))]))))
            
           
 
@@ -290,7 +303,7 @@
     
 
 
-(define (color-graph graph)
+(define (color-graph graph mgraph)
   (lambda (vars)
 
     (define update-adjs-saturations!
@@ -305,7 +318,6 @@
                                    (heap-remove! node-heap `(,var . (,adj ,sat)))
                                    (heap-add! node-heap `(,var . (,adj ,(set-add sat col)))))]))))))
         
-
     (let loop ([node-heap (hash->heap graph)]
                [map-col (make-hash)])
       (if (= 0 (heap-count node-heap))
@@ -314,7 +326,7 @@
                  [char (node-key node)]
                  [adjs (node-adjs node)]
                  [saturations (node-saturations node)])
-            (let ([color (lowest-missing-num (set->list saturations))])
+            (let ([color (choose-color char adjs mgraph map-col (set->list saturations))])
               (hash-set! map-col char color)
               (heap-remove-min! node-heap)
               (update-adjs-saturations! node-heap adjs color)
@@ -355,9 +367,9 @@
   (lambda (color-map)
     (lambda (ast)
       (match ast
-        [`(program (,vars ,graph) ,instrs ...)
+        [`(program (,vars ,graph ,mgraph) ,instrs ...)
          (let* ([annot-graph (annotate graph)]
-                [color-map ((color-graph annot-graph) vars)])
+                [color-map ((color-graph annot-graph mgraph) vars)])
            (let-values ([(reg-map stk-size) (reg-spill color-map)])
              `(program ,stk-size ,@(map (lambda (instr) ((allocate-registers reg-map) instr)) instrs))))]
         [`(var ,x) (hash-ref color-map x)]
