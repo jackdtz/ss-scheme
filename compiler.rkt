@@ -20,6 +20,60 @@
   (cond [(eq? 0 (modulo n alignment)) n]
         [else
          (+ n (- alignment (modulo n alignment)))]))
+
+(define look-up
+  (lambda (env key)
+    (cdr (assq env key))))
+
+
+(define add-env
+  (lambda (env key val)
+    (cons `(,key . ,val) env)))
+
+(define type-integer? (lambda (x) (equal? x 'Integer)))
+(define type-boolean? (lambda (x) (equal? x 'Boolean)))
+(define same-type? (lambda (x y) (equal? x y)))
+
+
+(define type-checker
+  (lambda (env)
+    (lambda (ast)
+      (match ast
+        [`(program ,body) 
+         (let ([body-type ((type-checker env) body)])
+           `(program (type ,body-type) ,body))]
+        ['(read) ]
+        [(? fixnum?) 'Integer]
+        [(? boolean?) 'Boolean]
+        [(? symbol?) (look-up env ast)]
+        
+        [`(let ([,var ,(app (type-checker env) var-type)]) ,body)
+         (let ([new-env (add-env env var var-type)])
+           ((type-checker new-env) body))]
+        [`(not ,(app (type-checker env) type))
+         (match type
+           ['Boolean 'Boolean]
+           [else (error "type-checker: 'not expects a Boolean" ast type)])]
+        [`(- ,(app (type-checker env) type))
+         (match type
+           ['Integer 'Integer]
+           [else (error "type-checker: '- expects an Integer" ast type)])]
+        [`(+ ,e1 ,e2)
+         (let ([type1 ((type-checker env) e1)]
+               [type2 ((type-checker env) e2)])
+           (cond [(and (type-integer? type1) (type-integer? type2)) 'Integer]
+                 [(type-integer? type1) (error "type-checker: '+ expects e2 to be an Integer" ast e2)]
+                 [(type-integer? type2) (error "type-checker: '+ expects e1 to be an Integer" ast e1)]
+                 [else (error "type-checker: '+ expects e1, e2 to be Integer" ast e1 e2)]))]
+        [`(if ,cmp ,t ,f) 
+         (let ([type-cmp ((type-checker env) cmp)]
+               [type-t ((type-checker env) t)]
+               [type-f ((type-checker env) f)])
+           (cond [(and (type-boolean? cmp) (same-type? t f)) t]
+                 [(type-boolean? cmp) (error "thn and els have different type" ast t f type-t type-f)]
+                 [])
+
+
          
 (define uniquify
   (lambda (env)
@@ -299,10 +353,6 @@
                         (hash-set! hash var `(,adj ,(set-add sat new-color))))))
       (hash->heap hash))))
   
-      
-    
-
-
 (define (color-graph graph mgraph)
   (lambda (vars)
 
