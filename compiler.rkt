@@ -10,6 +10,9 @@
 (define instruction-set
   (set 'addq 'negq 'movq 'subq))
 
+(define cmp-instructions
+  (set 'eq? '< '<= '> '>=))
+
 (define caller-save (set 'rdx 'rcx 'rsi 'rdi 'r8 'r9 'r10))
 
 (define general-registers (vector 'rbx 'rcx 'rdx 'rsi 'rdi
@@ -23,57 +26,80 @@
 
 (define look-up
   (lambda (env key)
-    (cdr (assq env key))))
+    (if (hash-has-key? env key)
+        (car (hash-ref env key))
+        (error "no value found for key" env key))))
 
+(define add1 (lambda (x) (+ 1 x)))
 
 (define add-env
   (lambda (env key val)
-    (cons `(,key . ,val) env)))
+    (if (hash-has-key? env key)
+        (hash-set env key (cons val (hash-ref env key)))
+        (hash-set env key (list val)))))
 
 (define type-integer? (lambda (x) (equal? x 'Integer)))
 (define type-boolean? (lambda (x) (equal? x 'Boolean)))
 (define same-type? (lambda (x y) (equal? x y)))
 
-#|
-(define type-checker
-  (lambda (env)
+
+(define type-check
+  (lambda (env level)
     (lambda (ast)
+      ; (define recur (type-check env level))
       (match ast
         [`(program ,body) 
-         (let ([body-type ((type-checker env) body)])
+         (let ([body-type ((type-check (hash) level) body)])
            `(program (type ,body-type) ,body))]
-        ['(read) ]
+        ['(read) 'Integer]
         [(? fixnum?) 'Integer]
         [(? boolean?) 'Boolean]
-        [(? symbol?) (look-up env ast)]
-        
-        [`(let ([,var ,(app (type-checker env) var-type)]) ,body)
-         (let ([new-env (add-env env var var-type)])
-           ((type-checker new-env) body))]
-        [`(not ,(app (type-checker env) type))
+        [(? symbol?) (look-up env ast )]
+        [`(eq? ,e1 ,e2)
+         (let ([e1-type ((type-check env level) e1)]
+               [e2-type ((type-check env level) e2)])
+           (if (equal? e1-type e2-type)
+               e1-type
+               (error "type-check: eq? expect two operands have the same type" ast e1 e2)))]            
+        [`(,cmp-op ,e1 ,e2)
+         #:when (set-member? cmp-instructions cmp-op)
+        (cond [(and (fixnum? e1) (fixnum? e2)) 'Integer]
+              [(and (boolean? e1) (boolean? e2)) 'Boolean]
+              [else 
+               (error "type-check: expects two operands have the same type" ast cmp-op e1 e2)])]
+        [`(let ([,var ,(app (type-check env (add1 level)) var-type)]) ,body)
+         (let* ([new-level (add1 level)]
+                [new-env (add-env env var var-type)])
+           ((type-check new-env new-level) body))]
+        [`(not ,(app (type-check env level) type))
          (match type
            ['Boolean 'Boolean]
-           [else (error "type-checker: 'not expects a Boolean" ast type)])]
-        [`(- ,(app (type-checker env) type))
+           [else (error "type-check: 'not expects a Boolean" ast type)])]
+        [`(- ,(app (type-check env level) type))
          (match type
            ['Integer 'Integer]
-           [else (error "type-checker: '- expects an Integer" ast type)])]
+           [else (error "type-check: '- expects an Integer" ast type)])]
         [`(+ ,e1 ,e2)
-         (let ([type1 ((type-checker env) e1)]
-               [type2 ((type-checker env) e2)])
+         (let ([type1 ((type-check env level) e1)]
+               [type2 ((type-check env level) e2)])
            (cond [(and (type-integer? type1) (type-integer? type2)) 'Integer]
-                 [(type-integer? type1) (error "type-checker: '+ expects e2 to be an Integer" ast e2)]
-                 [(type-integer? type2) (error "type-checker: '+ expects e1 to be an Integer" ast e1)]
-                 [else (error "type-checker: '+ expects e1, e2 to be Integer" ast e1 e2)]))]
+                 [(type-integer? type1) 
+                  (error "type-check: '+ expects e2 to be an Integer" ast e2)]
+                 [(type-integer? type2) 
+                  (error "type-check: '+ expects e1 to be an Integer" ast e1)]
+                 [else 
+                  (error "type-check: '+ expects e1, e2 to be Integer" ast e1 e2)]))]
         [`(if ,cmp ,t ,f) 
-         (let ([type-cmp ((type-checker env) cmp)]
-               [type-t ((type-checker env) t)]
-               [type-f ((type-checker env) f)])
+         (let ([type-cmp ((type-check env level) cmp)]
+               [type-t ((type-check env level) t)]
+               [type-f ((type-check env level) f)])
            (cond [(and (type-boolean? cmp) (same-type? t f)) t]
-                 [(type-boolean? cmp) (error "thn and els have different type" ast t f type-t type-f)]
-                 [])
+                 [(not (same-type? t f)) 
+                  (error "type-check: thn and els have different type" ast t f type-t type-f)]
+                 [(not (type-boolean? type-cmp)) 
+                  (error "type-check: condition expression expects a boolean type" ast cmp type-cmp)]))]))))
 
-|#
+
          
 (define uniquify
   (lambda (env)
@@ -85,7 +111,7 @@
          (let ([new-x (gensym x)])
            `(let ([,new-x ,new-e])
               ,((uniquify (cons `(,x . ,new-x) env)) body)))]
-        [`(program ,e) `(program ,((uniquify env) e))]
+        [`(program ,t ,e) `(program ,((uniquify env) e))]
         [`(,op ,es ...) #:when (set-member? primitive-set op)
                         `(,op ,@(map (lambda (e) ((uniquify env) e)) es))]
         [else (error "Uniquify could not match " e)]))))
@@ -541,7 +567,8 @@
 
 (define compile 
   (lambda (e)
-    (let* ([uniq ((uniquify '()) e)]
+    (let* ([checked ((type-check (void) 0) e)]
+           [uniq ((uniquify '()) checked)]
            [flat ((flatten #t) uniq)]
            [instrs (select-instructions flat)]
            [liveness ((uncover-live (void)) instrs)]
@@ -566,7 +593,7 @@
 
 (define compiler-list
   ;; Name           Typechecker               Compiler-Passes      Initial interpreter  Valid suites
-  `(("int_exp"      #f                        ,passes               ,interp-scheme       "s0" ,(range 1 28))
+  `(("int_exp"      #f                        ,passes               ,interp-scheme       (0))
     ;("reg_int_exp"  #f                        ,reg-int-exp-passes  ,interp-scheme       (0))
     ;("conditionals" ,conditionals-typechecker ,conditionals-passes ,interp-scheme       (0 1))
     ;("vectors"      ,vectors-typechecker      ,vectors-passes      ,interp-scheme       (0 1 2))
@@ -574,6 +601,16 @@
     ;("lambda"       ,lambda-typechecker       ,lambda-passes       ,interp-scheme       (0 1 2 3 4))
     ;("any"          ,R6-typechecker           ,R6-passes           ,interp-scheme       (0 1 2 3 4 6))
     ;("dynamic"      #f                        ,R7-passes           ,(interp-r7 '())     (7))
+    ))
+
+(define suite-list
+  `((0 . ,(range 1 28))
+    (1 . ,(range 1 37))
+    (2 . ,(range 1 21))
+    (3 . ,(range 1 20))
+    (4 . ,(range 0 8))
+    (6 . ,(range 0 10))
+    (7 . ,(range 0 9))
     ))
 
 
