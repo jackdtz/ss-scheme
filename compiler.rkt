@@ -127,6 +127,16 @@
       (match e
         [(? symbol?) (values e '() '())]
         [(? integer?) (values e '() '())]
+        [(? boolean?) (values e '() '())]
+        [`(not ,e)
+         (let-values ([(new-e e-stms e-vars) ((flatten #t) e)])
+           (values new-e
+                   `(,@e-stms (not ,new-e))
+                   e-vars))]
+        [`(eq? ,e1 ,e2)
+         (let-values ([(new-e1 e1-stms e1-vars) ((flatten #t) e1)]
+                      [(new-e2 e2-stms e2-vars) ((flatten #t) e2)])
+           (values ))]
         [`(let ([,x ,e]) ,body)
          (let-values ([(new-e e-stms e-vars) ((flatten #f) e)]
                       [(new-body body-stms body-vars) ((flatten need-temp) body)])
@@ -147,6 +157,7 @@
         [`(program ,e) 
          (let-values ([(e-exp e-stms e-vars) ((flatten #t) e)])
            `(program ,e-vars ,@(append e-stms `((return ,e-exp)))))]
+        [`(if ,cnd ,thn ,els)]
         [else (error "Flatten could not match " e)]))))
 
 (define bin-op->instr
