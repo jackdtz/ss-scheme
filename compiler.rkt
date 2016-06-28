@@ -107,6 +107,11 @@
       (match e
         [(? symbol?) (cdr (assq e env))]
         [(? integer?) e]
+        [(? boolean?) e]
+        [`(if ,cnd ,thn ,els)
+         `(if ,((uniquify env) cnd)
+              ,((uniquify env) thn)
+              ,((uniquify env) els))]
         [`(let ([,x ,(app (uniquify env) new-e)]) ,body)
          (let ([new-x (gensym x)])
            `(let ([,new-x ,new-e])
