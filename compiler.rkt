@@ -4,14 +4,19 @@
 (require "utilities/utilities.rkt")
 (require "utilities/interp.rkt")
 
+(define cmp-instructions
+  (set 'eq? '< '<= '> '>=))
+
 (define primitive-set
-  (set '+ '- 'read))
+  (set-union
+   (set '+ '- 'read       
+        'and 'or 'not)
+   cmp-instructions))
 
 (define instruction-set
   (set 'addq 'negq 'movq 'subq))
 
-(define cmp-instructions
-  (set 'eq? '< '<= '> '>=))
+
 
 (define caller-save (set 'rdx 'rcx 'rsi 'rdi 'r8 'r9 'r10))
 
@@ -133,21 +138,33 @@
            (values new-e
                    `(,@e-stms (not ,new-e))
                    e-vars))]
-        [`(eq? ,e1 ,e2)
-         (let-values ([(new-e1 e1-stms e1-vars) ((flatten #t) e1)]
-                      [(new-e2 e2-stms e2-vars) ((flatten #t) e2)])
-           (values ))]
+        [`(,cmp-op ,e1 ,e2)
+         #:when (set-member? cmp-instructions cmp-op)
+         
+                            
+        [`(if ,cnd ,thn ,els)
+         (let-values ([(new-cnd cnd-stms cnd-vars) ((flatten #t) cnd)]
+                      [(new-thn thn-stms thn-vars) ((flatten #t) thn)]
+                      [(new-els els-stms els-vars) ((flatten #t) cnd)])
+           (let ([if-var (gensym 'if.)])
+             (values if-var
+                     (append* cnd-stms
+                              `(if (,eq? #t ,new-cnd)
+                                   (,@thn-stms (assign ,if-var ,new-thn))
+                                   (,@els-stms (assign ,if-var ,new-els))))
+                     (cons if-var (append* cnd-vars thn-vars els-vars)))))]
+                      
         [`(let ([,x ,e]) ,body)
          (let-values ([(new-e e-stms e-vars) ((flatten #f) e)]
                       [(new-body body-stms body-vars) ((flatten need-temp) body)])
            (values new-body
                    (append e-stms `((assign ,x ,new-e)) body-stms)
                    (cons x (append e-vars body-vars))))]
-        [`(,op ,(app (flatten #t) new-es es-stms* es-vars*) ...)
+        [`(,op ,(app (flatten #t) new-es* es-stms* es-vars*) ...)
          #:when (set-member? primitive-set op)         
-         (let ([prim-exp `(,op ,@new-es)]
+         (let ([prim-exp `(,op ,@new-es*)]
                [es-stms (append* es-stms*)]
-               [es-vars (append* es-vars*)])
+               [es-vars (append* es-vars*)])               
            (case need-temp
              [(#f) (values prim-exp es-stms es-vars)]
              [(#t) (let ([temp (gensym 'temp)])
@@ -157,7 +174,7 @@
         [`(program ,e) 
          (let-values ([(e-exp e-stms e-vars) ((flatten #t) e)])
            `(program ,e-vars ,@(append e-stms `((return ,e-exp)))))]
-        [`(if ,cnd ,thn ,els)]
+        
         [else (error "Flatten could not match " e)]))))
 
 (define bin-op->instr
