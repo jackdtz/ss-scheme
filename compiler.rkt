@@ -3,6 +3,7 @@
 (require data/heap)
 (require "utilities/utilities.rkt")
 (require "utilities/interp.rkt")
+(provide (all-defined-out))
 
 (define cmp-instructions
   (set 'eq? '< '<= '> '>=))
@@ -18,16 +19,16 @@
 
 
 
-(define caller-save (set 'rdx 'rcx 'rsi 'rdi 'r8 'r9 'r10))
+; (define caller-save (set 'rdx 'rcx 'rsi 'rdi 'r8 'r9 'r10))
 
-(define general-registers (vector 'rbx 'rcx 'rdx 'rsi 'rdi
-                                  'r8 'r9 'r10 'r12 
-                                  'r13 'r14))
+; (define general-registers (vector 'rbx 'rcx 'rdx 'rsi 'rdi
+;                                   'r8 'r9 'r10 'r12 
+;                                   'r13 'r14))
 
-(define (align n alignment)
-  (cond [(eq? 0 (modulo n alignment)) n]
-        [else
-         (+ n (- alignment (modulo n alignment)))]))
+; (define (align n alignment)
+;   (cond [(eq? 0 (modulo n alignment)) n]
+;         [else
+;          (+ n (- alignment (modulo n alignment)))]))
 
 (define look-up
   (lambda (env key)
@@ -48,61 +49,63 @@
 (define same-type? (lambda (x y) (equal? x y)))
 
 
-(define type-check
-  (lambda (env level)
-    (lambda (ast)
-      ; (define recur (type-check env level))
-      (match ast
-        [`(program ,body) 
-         (let ([body-type ((type-check (hash) level) body)])
-           `(program (type ,body-type) ,body))]
-        ['(read) 'Integer]
-        [(? fixnum?) 'Integer]
-        [(? boolean?) 'Boolean]
-        [(? symbol?) (look-up env ast )]
-        [`(eq? ,e1 ,e2)
-         (let ([e1-type ((type-check env level) e1)]
-               [e2-type ((type-check env level) e2)])
-           (if (equal? e1-type e2-type)
-               e1-type
-               (error "type-check: eq? expect two operands have the same type" ast e1 e2)))]            
-        [`(,cmp-op ,e1 ,e2)
-         #:when (set-member? cmp-instructions cmp-op)
-        (cond [(and (fixnum? e1) (fixnum? e2)) 'Integer]
-              [(and (boolean? e1) (boolean? e2)) 'Boolean]
-              [else 
-               (error "type-check: expects two operands have the same type" ast cmp-op e1 e2)])]
-        [`(let ([,var ,(app (type-check env (add1 level)) var-type)]) ,body)
-         (let* ([new-level (add1 level)]
-                [new-env (add-env env var var-type)])
-           ((type-check new-env new-level) body))]
-        [`(not ,(app (type-check env level) type))
-         (match type
-           ['Boolean 'Boolean]
-           [else (error "type-check: 'not expects a Boolean" ast type)])]
-        [`(- ,(app (type-check env level) type))
-         (match type
-           ['Integer 'Integer]
-           [else (error "type-check: '- expects an Integer" ast type)])]
-        [`(+ ,e1 ,e2)
-         (let ([type1 ((type-check env level) e1)]
-               [type2 ((type-check env level) e2)])
-           (cond [(and (type-integer? type1) (type-integer? type2)) 'Integer]
-                 [(type-integer? type1) 
-                  (error "type-check: '+ expects e2 to be an Integer" ast e2)]
-                 [(type-integer? type2) 
-                  (error "type-check: '+ expects e1 to be an Integer" ast e1)]
-                 [else 
-                  (error "type-check: '+ expects e1, e2 to be Integer" ast e1 e2)]))]
-        [`(if ,cmp ,t ,f) 
-         (let ([type-cmp ((type-check env level) cmp)]
-               [type-t ((type-check env level) t)]
-               [type-f ((type-check env level) f)])
-           (cond [(and (type-boolean? cmp) (same-type? t f)) t]
-                 [(not (same-type? t f)) 
-                  (error "type-check: thn and els have different type" ast t f type-t type-f)]
-                 [(not (type-boolean? type-cmp)) 
-                  (error "type-check: condition expression expects a boolean type" ast cmp type-cmp)]))]))))
+; (define type-check
+;   (lambda (env level)
+;     (lambda (ast)
+;       ; (define recur (type-check env level))
+;       (match ast
+;         [`(program ,body) 
+;          (let ([body-type ((type-check (hash) level) body)])
+;            `(program ,body))]
+;         ['(read) 'Integer]
+;         [(? fixnum?) 'Integer]
+;         [(? boolean?) 'Boolean]
+;         [(? symbol?) (look-up env ast )]
+;         [`(eq? ,e1 ,e2)
+;          (let ([e1-type ((type-check env level) e1)]
+;                [e2-type ((type-check env level) e2)])
+;            (if (equal? e1-type e2-type)
+;                'Boolean
+;                (error "type-check: eq? expect two operands have the same type" ast e1 e2)))]            
+;         [`(,cmp-op ,e1 ,e2)
+;          #:when (set-member? cmp-instructions cmp-op)
+;         (cond [(and (fixnum? e1) (fixnum? e2)) 'Boolean]
+;               [(and (boolean? e1) (boolean? e2)) 'Boolean]
+;               [else 
+;                (error "type-check: expects two operands have the same type" ast cmp-op e1 e2)])]
+;         [`(let ([,var ,(app (type-check env (add1 level)) var-type)]) ,body)
+;          (let* ([new-level (add1 level)]
+;                 [new-env (add-env env var var-type)])
+;            ((type-check new-env new-level) body))]
+;         [`(not ,(app (type-check env level) type))
+;          (match type
+;            ['Boolean 'Boolean]
+;            [else (error "type-check: 'not expects a Boolean" ast type)])]
+;         [`(- ,(app (type-check env level) type))
+;          (match type
+;            ['Integer 'Integer]
+;            [else (error "type-check: '- expects an Integer" ast type)])]
+;         [`(+ ,e1 ,e2)
+;          (let ([type1 ((type-check env level) e1)]
+;                [type2 ((type-check env level) e2)])
+;            (cond [(and (type-integer? type1) (type-integer? type2)) 'Integer]
+;                  [(type-integer? type1) 
+;                   (error "type-check: '+ expects e2 to be an Integer" ast e2)]
+;                  [(type-integer? type2) 
+;                   (error "type-check: '+ expects e1 to be an Integer" ast e1)]
+;                  [else 
+;                   (error "type-check: '+ expects e1, e2 to be Integer" ast e1 e2)]))]
+;         [`(if ,cmp ,t ,f) 
+;          (let ([type-cmp ((type-check env level) cmp)]
+;                [type-t ((type-check env level) t)]
+;                [type-f ((type-check env level) f)])
+;            (cond [(and (type-boolean? cmp) (same-type? type-t type-f)) type-t]
+;                  [(not (same-type? type-t type-f)) 
+;                   (error (format "type-check: (thn:~a) and (els:~a) from ~a have different type ~a and ~a" 
+;                                   t f ast type-t type-f))]
+;                  [(not (type-boolean? type-cmp)) 
+;                   (error (format "type-check: condition expression ~a from ~a expects a boolean type, but get type ~a" 
+;                                   cmp ast type-cmp))]))]))))
 
 
          
@@ -121,7 +124,7 @@
          (let ([new-x (gensym x)])
            `(let ([,new-x ,new-e])
               ,((uniquify (cons `(,x . ,new-x) env)) body)))]
-        [`(program ,t ,e) `(program ,((uniquify env) e))]
+        [`(program ,e) `(program ,((uniquify env) e))]
         [`(,op ,es ...) #:when (set-member? primitive-set op)
                         `(,op ,@(map (lambda (e) ((uniquify env) e)) es))]
         [else (error "Uniquify could not match " e)]))))
@@ -129,31 +132,41 @@
 (define flatten
   (lambda (need-temp)
     (lambda (e)
+      
+      (define (flatten-if thn-temp thn-stms els-temp els-stms vars)
+        (lambda (cnd)
+          (match cnd
+            [#t (values thn-temp thn-stms vars)]
+            [#f (values els-temp els-stms vars)] 
+            [`(not ,e) ((flatten-if els-temp els-stms thn-temp thn-stms vars) e)]
+            [`(,cmp ,e1 ,e2) #:when (set-member? cmp-instructions cmp) 
+             (let-values ([(new-e1 e1-stms e1-vars) ((flatten #t) e1)]
+                          [(new-e2 e2-stms e2-vars) ((flatten #t) e2)])
+               (let ([if-temp (gensym 'if.)])
+                 (values if-temp
+                         `(,@e1-stms
+                           ,@e2-stms
+                           (if (eq? ,new-e1 ,new-e2)
+                               (,@thn-stms (assign ,if-temp ,thn-temp))
+                               (,@els-stms (assign ,if-temp ,els-temp))))
+                         (cons if-temp (append e1-vars e2-vars vars)))))]
+            [`(let ([,x ,e]) ,body) 
+             (let*-values ([(new-e e-stms e-vars) ((flatten #f) e)]
+                           [(new-body body-stms body-vars)
+                            ((flatten-if thn-temp thn-stms els-temp els-stms vars) body)])
+                  (values new-body
+                          `(,@e-stms 
+                            (assign ,x ,new-e) 
+                            ,@body-stms)
+                          (cons x (append e-vars body-vars vars))))])))
       (match e
         [(? symbol?) (values e '() '())]
         [(? integer?) (values e '() '())]
-        [(? boolean?) (values e '() '())]
-        [`(not ,e)
-         (let-values ([(new-e e-stms e-vars) ((flatten #t) e)])
-           (values new-e
-                   `(,@e-stms (not ,new-e))
-                   e-vars))]
-        [`(,cmp-op ,e1 ,e2)
-         #:when (set-member? cmp-instructions cmp-op)
-         
-                            
+        [(? boolean?) (values e '() '())]                     
         [`(if ,cnd ,thn ,els)
-         (let-values ([(new-cnd cnd-stms cnd-vars) ((flatten #t) cnd)]
-                      [(new-thn thn-stms thn-vars) ((flatten #t) thn)]
-                      [(new-els els-stms els-vars) ((flatten #t) cnd)])
-           (let ([if-var (gensym 'if.)])
-             (values if-var
-                     (append* cnd-stms
-                              `(if (,eq? #t ,new-cnd)
-                                   (,@thn-stms (assign ,if-var ,new-thn))
-                                   (,@els-stms (assign ,if-var ,new-els))))
-                     (cons if-var (append* cnd-vars thn-vars els-vars)))))]
-                      
+         (let-values ([(new-thn thn-stms thn-vars) ((flatten #t) thn)]
+                      [(new-els els-stms els-vars) ((flatten #t) els)])
+           ((flatten-if new-thn thn-stms new-els els-stms (append thn-vars els-vars)) cnd))]                 
         [`(let ([,x ,e]) ,body)
          (let-values ([(new-e e-stms e-vars) ((flatten #f) e)]
                       [(new-body body-stms body-vars) ((flatten need-temp) body)])
@@ -598,69 +611,43 @@
       [else (error "print-x86 unmatched " e)])))
 
 
-(define compile 
-  (lambda (e)
-    (let* ([checked ((type-check (void) 0) e)]
-           [uniq ((uniquify '()) checked)]
-           [flat ((flatten #t) uniq)]
-           [instrs (select-instructions flat)]
-           [liveness ((uncover-live (void)) instrs)]
-           [graph ((build-interference (void) (void) (void)) liveness)]
-           [reg-alloc ((allocate-registers (void)) graph)]
-           [patched (patch-instructions reg-alloc)]
-           [x86 (print-x86 patched)])
-      (define out (open-output-file #:exists 'replace "assembly/output.s"))
-      (display x86 out)
-      (close-output-port out)
-      (display x86))))
+; (define compile 
+;   (lambda (e)
+;     (let* (
+;            ; [checked ((type-check (void) 0) e)]
+;            [uniq ((uniquify '()) e)]
+;            [flat ((flatten #t) uniq)]
+;            ; [instrs (select-instructions flat)]
+;            ; [liveness ((uncover-live (void)) instrs)]
+;            ; [graph ((build-interference (void) (void) (void)) liveness)]
+;            ; [reg-alloc ((allocate-registers (void)) graph)]
+;            ; [patched (patch-instructions reg-alloc)]
+;            ; [x86 (print-x86 patched)]
+;           )
+;       ; (define out (open-output-file #:exists 'replace "assembly/output.s"))
+;       ; (display x86 out)
+;       ; (close-output-port out)
+;       (pretty-print flat))))
+
 
 (define passes
  (list
   `("uniquify"              ,(uniquify '())          ,interp-scheme)
   `("flatten"               ,(flatten #f)            ,interp-C)
-  `("instruction selection" ,select-instructions     ,interp-x86)
-  `("assign homes"          ,(assign-homes (void))   ,interp-x86)
-  `("insert spill code"     ,patch-instructions      ,interp-x86)
+  ; `("instruction selection" ,select-instructions     ,interp-x86)
+  ; `("assign homes"          ,(assign-homes (void))   ,interp-x86)
+  ; `("insert spill code"     ,patch-instructions      ,interp-x86)
  ))
 
 
-(define compiler-list
-  ;; Name           Typechecker               Compiler-Passes      Initial interpreter  Valid suites
-  `(("int_exp"      #f                        ,passes               ,interp-scheme       (0))
-    ;("reg_int_exp"  #f                        ,reg-int-exp-passes  ,interp-scheme       (0))
-    ;("conditionals" ,conditionals-typechecker ,conditionals-passes ,interp-scheme       (0 1))
-    ;("vectors"      ,vectors-typechecker      ,vectors-passes      ,interp-scheme       (0 1 2))
-    ;("functions"    ,functions-typechecker    ,functions-passes    ,interp-scheme       (0 1 2 3))
-    ;("lambda"       ,lambda-typechecker       ,lambda-passes       ,interp-scheme       (0 1 2 3 4))
-    ;("any"          ,R6-typechecker           ,R6-passes           ,interp-scheme       (0 1 2 3 4 6))
-    ;("dynamic"      #f                        ,R7-passes           ,(interp-r7 '())     (7))
-    ))
 
-(define suite-list
-  `((0 . ,(range 1 28))
-    (1 . ,(range 1 37))
-    (2 . ,(range 1 21))
-    (3 . ,(range 1 20))
-    (4 . ,(range 0 8))
-    (6 . ,(range 0 10))
-    (7 . ,(range 0 9))
-    ))
+; (compile 
+;   '(program
+; (if (eq? (read) 1) 42 0))
+; )
 
 
-(compile 
- '(program
-   (let ([v 1])
-     (let ([w 46])
-       (let ([x (+ v 7)])
-         (let ([y (+ 4 x)])
-           (let ([z (+ x w)])
-             (+ z (- y)))))))))
+; (compile '(program (+ 13 22)))
 
-
-
-;(compile '(program (+ 13 22)))
-
-(for ([test compiler-list])
- (apply interp-tests test))
 
 

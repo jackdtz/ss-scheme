@@ -15,6 +15,8 @@
      arg-registers rootstack-reg register->color registers align
          byte-reg->full-reg print-by-type strip-has-type)
 
+
+
 ;; debug state is a nonnegative integer.
 ;; The easiest way to increment it is passing the -d option
 ;; to run-tests.rkt
@@ -231,7 +233,11 @@
      e]))
 
 (define (check-passes name typechecker passes initial-interp)
+  (define index 0)
   (lambda (test-name)
+    ; (log (format "** checking passes for test ~a " test-name))
+    
+
     (debug "** compiler " name)
     (debug "** checking passes for test " test-name)
     (define input-file-name (format "tests/~a.in" test-name))
@@ -239,6 +245,7 @@
     (define program-name (format "tests/~a.rkt" test-name))
     (define sexp (read-program program-name))
     (debug "check passes:" sexp)
+    ; (log (format "check passes: ~a" sexp))
     (define type-error-expected (file-exists? (format "tests/~a.tyerr" test-name)))
     (define tsexp (test-typecheck typechecker sexp))    
     (cond
