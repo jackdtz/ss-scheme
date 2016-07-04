@@ -18,7 +18,7 @@
    cmp-instructions))
 
 (define instruction-set
-  (set 'addq 'negq 'movq 'subq))
+  (set 'addq 'negq 'movq 'subq 'movzbq 'cmpq 'xorq))
 
 
 
@@ -145,6 +145,9 @@
             [#t (values thn-temp thn-stms vars)]
             [#f (values els-temp els-stms vars)] 
             [`(not ,e) ((flatten-if els-temp els-stms thn-temp thn-stms vars) e)]
+            [`(and ,e1 ,e2)
+             ((flatten-if thn-temp thn-stms els-temp els-stms vars)
+              `(if (not ,e1) #f ,e2))]
             [`(,cmp ,e1 ,e2) #:when (set-member? cmp-instructions cmp) 
              (let-values ([(new-e1 e1-stms e1-vars) ((flatten #t) e1)]
                           [(new-e2 e2-stms e2-vars) ((flatten #t) e2)])
@@ -320,24 +323,30 @@
       [`(var ,x) (set x)]
       [`(reg ,r) (set r)]
       [`(int ,i) (set)]
+      [`(byte-reg ,r) (set r)]
       [else (error "unhandled case " e)])))
 
 (define write-vars
   (lambda (ast)
     (match ast
-      [`(,instr ,src ,dst) #:when (set-member? instruction-set instr)
-       (free-var dst)]
+      [`(,op ,src ,dst) #:when (set-member? instruction-set op)
+                        (free-var dst)]
       [`(negq ,x) (free-var x)]
       [`(callq ,f) caller-save]
+      [`(set ,cc ,arg) (set arg)]
+      [`(cmpq ,e1 ,e2) (set)]
       [else (error "write-vars could not match " ast)])))
 
 (define read-vars
   (lambda (ast)
     (match ast
-      [`(movq ,src ,dst) (free-var src)]
-      [(or `(addq ,src ,dst) `(subq ,src ,dst) `(imul ,src ,dst))
+      [(or `(movq ,src ,dst) `(movzbq ,src ,dst)) (free-var src)]
+      [(or `(addq ,src ,dst) `(subq ,src ,dst) `(imul ,src ,dst) `(xorq ,src ,dst))
        (set-union (free-var src) (free-var dst))]
+      [`(cmpq ,e1 ,e2) (set-union (free-var e1) (free-var e2))]
       [`(negq ,x) (free-var x)]
+      [`(set ,cc ,arg) (free-var arg)]
+      [`(callq ,f) caller-save]
       [else
        (error "read-vars could not match " ast)])))
 
@@ -356,7 +365,7 @@
                       (cons new-live-after all-lives) 
                       (cons new-instr instrs-col)))])))
    
-   (loop (reverse old-instrs) origin-live-after (list origin-live-after) '()))))
+   (loop (reverse old-instrs) origin-live-after `(,origin-live-after) '()))))
 
 (define uncover-live
   (lambda (live-after) 
@@ -364,15 +373,16 @@
     (match e
      [`(program ,vars ,instrs ...) 
       (let-values ([(new-instrs new-live-after) ((liveness (set)) instrs)])
-        `(program (,vars ,(cdr new-live-after)) ,new-instrs))]
+        `(program (,vars ,(cdr new-live-after)) ,@new-instrs))]
       [`(if (eq? ,e1 ,e2) ,thn ,els)
-       (let ([thns-before ((liveness live-after) thn)]
-             [elss-before ((liveness live-after) els)])
-         (values `(if (eq? ,e1 ,e2) ,thn ,thns-before ,els ,elss-before)
-                 (set-union thns-before
-                            elss-before
-                            (read-vars e1)
-                            (read-vars e2))))]                            
+       (let-values ([(new-thn thns-before) ((liveness live-after) thn)]
+                    [(new-els elss-before) ((liveness live-after) els)])
+
+         (values `(if (eq? ,e1 ,e2) ,new-thn ,(cdr thns-before) ,new-els ,(cdr elss-before))
+                 (set-union (apply set-union (cdr thns-before))
+                            (apply set-union (cdr elss-before))
+                            (free-var e1)
+                            (free-var e2))))]                            
       [else
        (values e (set-union (set-subtract live-after
                                           (write-vars e))
@@ -388,7 +398,7 @@
     (lambda (ast)
       (match ast
         
-       [`(program (,vars ,lives) ,instrs)
+       [`(program (,vars ,lives) ,instrs ...)
         (let ([graph (make-graph vars)]
               [mgraph (make-graph vars)])
           (let ([new-instrs
@@ -396,7 +406,7 @@
                            ((build-interference live-after graph mgraph) inst))])
             `(program (,vars ,graph ,mgraph) ,@new-instrs)))]
         
-        [`(movq ,src ,dst) 
+        [(or `(movq ,src ,dst) `(movzbq ,src ,dst))
          (begin
            (for ([v live-after])
                 (for ([d (free-var dst)]
@@ -412,8 +422,16 @@
                 (for ([r caller-save] #:when (not (equal? v r)))
                      (add-edge graph v r)))
            ast)]
-        
+        [`(if ,cnd ,thn ,thn-after ,els ,els-after)
+         (begin
+           (for ([inst thn] [live-after thn-after])
+             ((build-interference live-after graph mgraph) inst))
+           (for ([inst els] [live-after els-after])
+             ((build-interference live-after graph mgraph) inst))
+           `(if ,cnd ,thn ,els))]
+
         [else
+         (display ast)
          (begin
            (for ([v live-after])
                 (for ([d (write-vars ast)] #:when (not (equal? v d)))
@@ -553,7 +571,7 @@
          (let* ([annot-graph (annotate graph)]
                 [color-map ((color-graph annot-graph mgraph) vars)])
            (let-values ([(reg-map stk-size) (reg-spill color-map)])
-;             (list graph color-map))]
+;             (list graph color-map)))]
              `(program ,stk-size ,@(map (lambda (instr) ((allocate-registers reg-map) instr)) instrs))))]             
         [`(var ,x) (hash-ref color-map x)]
         [`(int ,i) `(int ,i)]
@@ -679,7 +697,7 @@
            [flat ((flatten #t) uniq)]
            [instrs (select-instructions flat)]
            [liveness ((uncover-live (void)) instrs)]
-           ;  [graph ((build-interference (void) (void) (void)) liveness)]
+           [graph ((build-interference (void) (void) (void)) liveness)]
            ;  [reg-alloc ((allocate-registers (void)) graph)]
            ;  [patched (patch-instructions reg-alloc)]
            ;  [x86 (print-x86 patched)]
@@ -694,11 +712,12 @@
       (pretty-print instrs)
       (newline)
       (pretty-print liveness)
+      (newline)
+      (pretty-print graph)
+      (newline)
       )))
 
 
-(run '(program (let ((x #t)) 42)))
-
-
+(run '(program (if (eq? (read) 1) 42 0)))
 
 
