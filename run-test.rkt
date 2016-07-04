@@ -4,7 +4,15 @@
 (require "utilities/interp.rkt")
 (require "compiler.rkt")
 
-
+(define passes
+ (list
+  `("uniquify"              ,(uniquify '())          ,interp-scheme)
+  `("flatten"               ,(flatten #f)            ,interp-C)
+  `("instruction selection" ,select-instructions     ,interp-x86)
+  `("liveness analysis"     ,(uncover-live (void))   ,interp-x86)
+  ; `("assign homes"          ,(assign-homes (void))   ,interp-x86)
+  ; `("insert spill code"     ,patch-instructions      ,interp-x86)
+ ))
 
 (define log 
   (lambda (message)
@@ -22,7 +30,7 @@
 
 (define compiler-list
   ;; Name           Typechecker               Compiler-Passes      Initial interpreter   Test-name    Valid suites
-  `(("conditionals"      #f                        ,passes               ,interp-scheme       "s0"         ,(cdr (assq 0 suite-list)))
+  `(("conditionals"  ,(type-check (void) 0)    ,passes               ,interp-scheme       "s1"         ,(cdr (assq 0 suite-list)))
     ;("reg_int_exp"  #f                        ,reg-int-exp-passes  ,interp-scheme                    (0))
     ;("conditionals" ,conditionals-typechecker ,conditionals-passes ,interp-scheme                    (0 1))
     ;("vectors"      ,vectors-typechecker      ,vectors-passes      ,interp-scheme       (0 1 2))

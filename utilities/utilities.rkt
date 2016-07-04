@@ -15,6 +15,9 @@
      arg-registers rootstack-reg register->color registers align
          byte-reg->full-reg print-by-type strip-has-type)
 
+(define log 
+  (lambda (message)
+    (display message) (newline)))
 
 
 ;; debug state is a nonnegative integer.
@@ -235,7 +238,7 @@
 (define (check-passes name typechecker passes initial-interp)
   (define index 0)
   (lambda (test-name)
-    ; (log (format "** checking passes for test ~a " test-name))
+    (log (format "** checking passes for test ~a " test-name))
     
 
     (debug "** compiler " name)
@@ -245,7 +248,7 @@
     (define program-name (format "tests/~a.rkt" test-name))
     (define sexp (read-program program-name))
     (debug "check passes:" sexp)
-    ; (log (format "check passes: ~a" sexp))
+    (log (format "check passes: ~a" sexp))
     (define type-error-expected (file-exists? (format "tests/~a.tyerr" test-name)))
     (define tsexp (test-typecheck typechecker sexp))    
     (cond
@@ -257,7 +260,9 @@
                  [result (cond [initial-interp
                                 (if (file-exists? input-file-name)
                                     (with-input-from-file input-file-name
-                                      (lambda () (initial-interp tsexp)))
+                                      (lambda ()
+                                        (log (format "reading file: ~a" input-file-name))
+                                        (initial-interp tsexp)))
                                     (initial-interp tsexp))]
                                [else 
                                 (if (file-exists? result-file-name)
