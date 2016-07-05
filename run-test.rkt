@@ -11,6 +11,7 @@
   `("instruction selection" ,select-instructions     ,interp-x86)
   `("liveness analysis"     ,(uncover-live (void))   ,interp-x86)
   `("build interference"    ,(build-interference (void) (void) (void)) ,interp-x86)
+  `("allocate register"     ,(allocate-registers (void)) ,interp-x86) 
   ; `("assign homes"          ,(assign-homes (void))   ,interp-x86)
   ; `("insert spill code"     ,patch-instructions      ,interp-x86)
  ))

@@ -333,7 +333,7 @@
                         (free-var dst)]
       [`(negq ,x) (free-var x)]
       [`(callq ,f) caller-save]
-      [`(set ,cc ,arg) (set arg)]
+      [`(set ,cc ,arg) (free-var arg)]
       [`(cmpq ,e1 ,e2) (set)]
       [else (error "write-vars could not match " ast)])))
 
@@ -345,7 +345,7 @@
        (set-union (free-var src) (free-var dst))]
       [`(cmpq ,e1 ,e2) (set-union (free-var e1) (free-var e2))]
       [`(negq ,x) (free-var x)]
-      [`(set ,cc ,arg) (free-var arg)]
+      [`(set ,cc ,arg) (set)]
       [`(callq ,f) caller-save]
       [else
        (error "read-vars could not match " ast)])))
@@ -431,7 +431,6 @@
            `(if ,cnd ,thn ,els))]
 
         [else
-         (display ast)
          (begin
            (for ([v live-after])
                 (for ([d (write-vars ast)] #:when (not (equal? v d)))
@@ -449,7 +448,9 @@
 
 (define choose-color
   (lambda (var interfered mgraph col-map satu)
-    (let* ([move-related-vars (hash-ref mgraph var)]
+    (let* ([move-related-vars (if (hash-has-key? mgraph var)
+                                  (hash-ref mgraph var)
+                                  (set))]
            [non-interfered (set-subtract move-related-vars
                                         interfered)]
            [non-interfered-alloc (filter (lambda (var) (hash-has-key? col-map var))
@@ -570,9 +571,9 @@
         [`(program (,vars ,graph ,mgraph) ,instrs ...)
          (let* ([annot-graph (annotate graph)]
                 [color-map ((color-graph annot-graph mgraph) vars)])
-           (let-values ([(reg-map stk-size) (reg-spill color-map)])
-;             (list graph color-map)))]
-             `(program ,stk-size ,@(map (lambda (instr) ((allocate-registers reg-map) instr)) instrs))))]             
+;           (let-values ([(reg-map stk-size) (reg-spill color-map)])
+             (list graph color-map))]
+;             `(program ,stk-size ,@(map (lambda (instr) ((allocate-registers reg-map) instr)) instrs))))]             
         [`(var ,x) (hash-ref color-map x)]
         [`(int ,i) `(int ,i)]
         [`(reg ,r) `(reg ,r)]
@@ -698,26 +699,30 @@
            [instrs (select-instructions flat)]
            [liveness ((uncover-live (void)) instrs)]
            [graph ((build-interference (void) (void) (void)) liveness)]
-           ;  [reg-alloc ((allocate-registers (void)) graph)]
+           [reg-alloc ((allocate-registers (void)) graph)]
            ;  [patched (patch-instructions reg-alloc)]
            ;  [x86 (print-x86 patched)]
            )
        ; (define out (open-output-file #:exists 'replace "assembly/output.s"))
        ; (display x86 out)
        ; (close-output-port out)
-      (pretty-print e)
+      (pretty-display e)
       (newline)
-      (pretty-print flat)
+      #|
+      (pretty-display flat)
       (newline)
-      (pretty-print instrs)
+      (pretty-display instrs)
       (newline)
-      (pretty-print liveness)
+      (pretty-display liveness)
       (newline)
-      (pretty-print graph)
+|#
+      (pretty-display graph)
       (newline)
+      (pretty-display reg-alloc)
+;      (newline)
       )))
 
 
-(run '(program (if (eq? (read) 1) 42 0)))
+(run '(program (let ((x (read))) (let ((y (read))) (if (eq? x y) 42 0)))))
 
 
