@@ -323,7 +323,7 @@
       [`(var ,x) (set x)]
       [`(reg ,r) (set r)]
       [`(int ,i) (set)]
-      [`(byte-reg ,r) (set r)]
+      [`(byte-reg ,r) (set (byte-reg->full-reg r))]
       [else (error "unhandled case " e)])))
 
 (define write-vars
@@ -423,12 +423,9 @@
                      (add-edge graph v r)))
            ast)]
         [`(if ,cnd ,thn ,thn-after ,els ,els-after)
-         (begin
-           (for ([inst thn] [live-after thn-after])
-             ((build-interference live-after graph mgraph) inst))
-           (for ([inst els] [live-after els-after])
-             ((build-interference live-after graph mgraph) inst))
-           `(if ,cnd ,thn ,els))]
+          (let ([new-thn (map (lambda (instr) ((build-interference thn-after graph mgraph) instr)) thn)]
+                [new-els (map (lambda (instr) ((build-interference els-after graph mgraph) instr)) els)])
+           `(if ,cnd ,new-thn ,new-els))]
 
         [else
          (begin
@@ -438,12 +435,16 @@
            ast)]))))
 
 
-
+; add saturation for each node
 (define annotate
   (lambda (graph)
     (hash-for-each
      graph              
-     (lambda (k v) (hash-set! graph k `(,v ,(set)))))
+     (lambda (var adj-nodes)
+       (let ([pre-saturated (list->set
+                             (map (lambda (reg) (register->color reg))
+                                  (filter (lambda (var) (set-member? registers var)) (set->list adj-nodes))))])
+       (hash-set! graph var `(,adj-nodes ,pre-saturated)))))
     graph))
 
 (define choose-color
@@ -518,8 +519,10 @@
                                  (begin
                                    (heap-remove! node-heap `(,var . (,adj ,sat)))
                                    (heap-add! node-heap `(,var . (,adj ,(set-add sat col)))))]))))))
+    (define init-heap-graph
+      (hash->heap (make-hash (filter (lambda (node) (not (set-member? registers (car node)))) (hash->list graph)))))
         
-    (let loop ([node-heap (hash->heap graph)]
+    (let loop ([node-heap init-heap-graph]
                [map-col (make-hash)])
       (if (= 0 (heap-count node-heap))
           map-col
@@ -559,33 +562,45 @@
        (* word-size number-of-spill)))))
     
     
-      
+(define assign-homes
+  (lambda (reg-map)
+    (lambda (e)
+      (define recur (assign-homes reg-map))
+      (match e
+        ; [`(program ,stk-size ,reg-map ,instrs ...)
+        ;  `(program ,stk-size ,@(map (lambda (instr) ((assign-homes reg-map) instr)) instrs))]
+        [`(var ,x) (hash-ref reg-map x)]
+        [`(int ,i) `(int ,i)]
+        [`(reg ,r) `(reg ,r)]
+        [`(byte-reg ,r) `(byte-reg ,r)]
+        [`(callq ,f) `(callq ,f)]
+        [`(set ,cc ,arg) `(set ,cc ,(recur arg))]
+        [`(,instr ,src ,dst)
+         #:when (set-member? instruction-set instr)
+         `(,instr ,(recur src)
+                  ,(recur dst))]
+        [`(,instr ,dst)
+          #:when (set-member? instruction-set instr)
+         `(,instr ,(recur dst))]
+        [`(eq? ,e1 ,e2) `(eq? ,(recur e1) ,(recur e2))]
+        [`(if ,cnd ,thn ,els)
+         `(if ,(recur cnd)
+              ,(map recur thn)
+              ,(map recur els))]
+        [else (error "assign-homes could not match " e)]))))      
       
 
 ; (program (vars graph) instrs) -> (program (vars) colored-instrs)
 ; color-map : var -> register / stack location
 (define allocate-registers
-  (lambda (color-map)
-    (lambda (ast)
-      (match ast
-        [`(program (,vars ,graph ,mgraph) ,instrs ...)
-         (let* ([annot-graph (annotate graph)]
-                [color-map ((color-graph annot-graph mgraph) vars)])
-;           (let-values ([(reg-map stk-size) (reg-spill color-map)])
-             (list graph color-map))]
-;             `(program ,stk-size ,@(map (lambda (instr) ((allocate-registers reg-map) instr)) instrs))))]             
-        [`(var ,x) (hash-ref color-map x)]
-        [`(int ,i) `(int ,i)]
-        [`(reg ,r) `(reg ,r)]
-        [`(callq ,f) `(call ,f)]
-        [`(,instr ,src ,dst)
-         #:when (set-member? instruction-set instr)
-         `(,instr ,((allocate-registers color-map) src)
-                  ,((allocate-registers color-map) dst))]
-        [`(,instr ,dst)
-          #:when (set-member? instruction-set instr)
-         `(,instr ,((allocate-registers color-map) dst))]
-        [else (error "allocate-registers could not match " ast)]))))
+  (lambda (ast)
+    (match ast
+      [`(program (,vars ,graph ,mgraph) ,instrs ...)
+       (let* ([annot-graph (annotate graph)]
+              [color-map ((color-graph annot-graph mgraph) vars)])
+        (let-values ([(reg-map stk-size) (reg-spill color-map)])
+          `(program ,stk-size ,@(map (assign-homes reg-map) instrs))))]
+      [else (error "allocate-registers could not match " ast)])))
                              
     
 
@@ -595,36 +610,25 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 
+(define lower-conditionals
+  (lambda (ast)
+    (match ast
+      [`(program ,stk-size ,instrs ...)
+       `(program ,stk-size ,@(append* (map lower-conditionals instrs)))]
+      [`(if (eq? ,e1 ,e2) ,thns ,elss)
+       (let ([thenlabel (gensym 'then.)]
+             [elselabel (gensym 'else.)]
+             [endlabel (gensym 'end.)])
+       `((cmpq ,e1 ,e2)
+         (jmp-if e ,thenlabel)
+         ,@(append* (map lower-conditionals elss))
+         (jmp ,endlabel)
+         (label ,thenlabel)
+         ,@(append* (map lower-conditionals thns))
+         (label ,endlabel)))]
+      [else `(,ast)])))
 
-(define assign-homes
-  (lambda (hash)
-    (lambda (e)
-      (match e
-        [`(program (,vars ...) ,stms ...)
-         (define word-size 8)
-         (define first-offset 8)
-         (define (make-stack-loc n)
-           `(deref rbp ,(- (+ first-offset
-                             (* word-size n)))))
-         (define hash-tbl
-           (make-hash (map cons vars
-                           (map make-stack-loc
-                                (stream->list (in-range 0 (length vars)))))))
-         (define stack-space
-           (align (* (length vars) word-size)
-                  16))
-         
-         `(program ,stack-space
-                   ,@(map (assign-homes hash-tbl) stms))]
-        [`(int ,i) e]
-        [`(reg ,r) e]
-        [`(callq read_int) e]
-        [`(var ,x) (hash-ref hash x)]
-        [`(,instr ,es ...)
-         #:when (set-member? instruction-set instr)
-         `(,instr ,@(map (assign-homes hash) es))]
-        [else
-         (error "assign-homes could not match " e)]))))
+        
 
 
 (define patch-instructions
@@ -639,6 +643,11 @@
   (match e
     [`(program ,frame-size ,instr ...)
     `(program ,frame-size ,@(append* (map patch-instructions instr)))]
+    [`(cmpq (int ,e1) (int ,e2)) 
+     `((movq (int ,e2) (reg rax))
+       (cmpq (int ,e1) (reg rax)))]
+    [`(cmpq (reg ,r) (int ,i))
+     `((cmpq (int ,i) (reg ,r)))]
     [`(movq ,src ,dst)
      (cond [(equal? src dst) '()]
            [(and (in-memory? src) (in-memory? dst))
@@ -650,6 +659,7 @@
             `((movq ,src (reg rax)) (,instr (reg rax) ,dst))]
            [else `((,instr ,src ,dst))])]
     
+    
     [else `(,e)])))
   
   
@@ -660,6 +670,10 @@
       [`(int ,n) (format "$~a" n)]
       [`(reg ,r) (format "%~a" r)]
       [`(callq ,f)
+       ; (string-append* 
+       ;   (map (lambda (reg) 
+       ;          (format "\tpushq\t%~a" reg))
+       ;        caller-save))
        (format "\tcallq\t~a\n" (label-name (symbol->string f)))]
       [`(,instr ,src ,dst)
        #:when (set-member? instruction-set instr)
@@ -699,30 +713,35 @@
            [instrs (select-instructions flat)]
            [liveness ((uncover-live (void)) instrs)]
            [graph ((build-interference (void) (void) (void)) liveness)]
-           [reg-alloc ((allocate-registers (void)) graph)]
-           ;  [patched (patch-instructions reg-alloc)]
-           ;  [x86 (print-x86 patched)]
+           [allocs (allocate-registers graph)]
+           [lower-if (lower-conditionals allocs)]
+           [patched (patch-instructions lower-if)]
+           [x86 (print-x86 patched)]
            )
        ; (define out (open-output-file #:exists 'replace "assembly/output.s"))
        ; (display x86 out)
        ; (close-output-port out)
-      (pretty-display e)
+     (pretty-display e)
+     (newline)
+     (pretty-display flat)
+     (newline)
+     (pretty-display instrs)
+     (newline)
+     (pretty-display liveness)
+     (newline)
+      (pretty-display allocs)
       (newline)
-      #|
-      (pretty-display flat)
+      (pretty-display lower-if )
       (newline)
-      (pretty-display instrs)
+      (pretty-display patched)
       (newline)
-      (pretty-display liveness)
+      (pretty-display x86)
       (newline)
-|#
-      (pretty-display graph)
-      (newline)
-      (pretty-display reg-alloc)
-;      (newline)
+
+
       )))
 
 
-(run '(program (let ((x (read))) (let ((y (read))) (if (eq? x y) 42 0)))))
+(run '(program (if (eq? 1 0) 777 (+ 2 (if (eq? (+ 1 1) 2) 40 444)))))
 
 

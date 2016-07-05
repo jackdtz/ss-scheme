@@ -6,14 +6,14 @@
 
 (define passes
  (list
-  `("uniquify"              ,(uniquify '())          ,interp-scheme)
-  `("flatten"               ,(flatten #f)            ,interp-C)
-  `("instruction selection" ,select-instructions     ,interp-x86)
-  `("liveness analysis"     ,(uncover-live (void))   ,interp-x86)
-  `("build interference"    ,(build-interference (void) (void) (void)) ,interp-x86)
-  `("allocate register"     ,(allocate-registers (void)) ,interp-x86) 
-  ; `("assign homes"          ,(assign-homes (void))   ,interp-x86)
-  ; `("insert spill code"     ,patch-instructions      ,interp-x86)
+  `("uniquify"              ,(uniquify '())                                   ,interp-scheme)
+  `("flatten"               ,(flatten #f)                                     ,interp-C)
+  `("instruction selection" ,select-instructions                              ,interp-x86)
+  `("liveness analysis"     ,(uncover-live (void))                            ,interp-x86)
+  `("build interference"    ,(build-interference (void) (void) (void))        ,interp-x86)
+  `("allocate register"     ,allocate-registers                               ,interp-x86) 
+  `("lower-conditionals"    ,lower-conditionals                               ,interp-x86)
+  `("patch-instructions"    ,patch-instructions                                ,interp-x86)
  ))
 
 (define log 
