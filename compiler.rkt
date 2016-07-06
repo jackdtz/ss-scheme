@@ -758,7 +758,7 @@
       )))
 
 
-    
+#|    
 (define args (current-command-line-arguments))
 
 (if (not (= 1 (vector-length args)))
@@ -768,5 +768,5 @@
              [in (read (open-input-file filename))])
         (code-gen `(program ,in) filename))))
 
-
+|#
 

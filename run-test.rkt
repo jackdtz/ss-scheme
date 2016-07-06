@@ -14,6 +14,7 @@
   `("allocate register"     ,allocate-registers                               ,interp-x86) 
   `("lower-conditionals"    ,lower-conditionals                               ,interp-x86)
   `("patch-instructions"    ,patch-instructions                                ,interp-x86)
+  `("x86"                   ,print-x86                                          #f)
  ))
 
 (define log 
@@ -42,11 +43,15 @@
     ;("dynamic"      #f                        ,R7-passes           ,(interp-r7 '())     (7))
     ))
 
+(compiler-tests "conditionals"  (type-check (void) 0)    passes      "s1"         (cdr (assq 0 suite-list)))
 
+#|
 (begin
   (for ([test compiler-list])
    (apply interp-tests test))
   (log "all passed"))
+
+|#
 
 
 

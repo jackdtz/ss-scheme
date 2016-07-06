@@ -393,6 +393,8 @@
 
 (define (compiler-tests name typechecker passes test-family test-nums)
   (define compiler (compile-file typechecker passes))
+  (display "starting")
+  (newline)
   (debug "compiler-tests starting" '())
   (for ([test-number (in-list test-nums)])
     (define test-name  (format "~a_~a" test-family test-number))
