@@ -668,12 +668,12 @@
     (match e
       [`(deref ,reg ,r) (format "~a(%~a)" r reg)]
       [`(int ,n) (format "$~a" n)]
-      [`(reg ,r) (format "%~a" r)]
+      [(or `(reg ,r) `(byte-reg ,r)) (format "%~a" r)]
+      [`(set ,cc ,arg) (format "\tset~a\t~a\n" cc (print-x86 arg))]
+      [`(jmp-if ,cc ,label) (format "\tj~a\t~a\n" cc (symbol->string label))]
+      [`(jmp ,label) (format "\tjmp\t~a\n" (symbol->string label))]
+      [`(label ,label) (format "\n~a:\n" (symbol->string label))]
       [`(callq ,f)
-       ; (string-append* 
-       ;   (map (lambda (reg) 
-       ;          (format "\tpushq\t%~a" reg))
-       ;        caller-save))
        (format "\tcallq\t~a\n" (label-name (symbol->string f)))]
       [`(,instr ,src ,dst)
        #:when (set-member? instruction-set instr)
@@ -690,6 +690,10 @@
          (format "~a:\n" (label-name "main"))
          (format "\tpushq\t%rbp\n")
          (format "\tmovq\t%rsp, %rbp\n")
+         (string-append* (map
+                          (lambda (reg)
+                            (format "\tpushq\t%~a\n" reg))
+                          (set->list callee-save)))
          (format "\tsubq\t$~a, %rsp\n" stack-space)
          "\n"
          (string-append* (map print-x86 instrs))
@@ -698,14 +702,19 @@
          (format "\tcallq\t~a\n" (label-name "print_int"))
          (format "\tmovq\t$0, %rax\n")
          (format "\taddq\t$~a, %rsp\n" stack-space)
+         (string-append* (map
+                          (lambda (reg)
+                            (format "\tpopq\t%~a\n" reg))
+                          (reverse (set->list callee-save))))
          (format "\tpopq\t%rbp\n")
          (format "\tretq\n"))]
       
       [else (error "print-x86 unmatched " e)])))
 
 
-(define run 
-  (lambda (e)
+(define code-gen
+  (lambda (e filepath)
+
     (let* (
            ; [checked ((type-check (void) 0) e)]
            [uniq ((uniquify '()) e)]
@@ -718,9 +727,15 @@
            [patched (patch-instructions lower-if)]
            [x86 (print-x86 patched)]
            )
-       ; (define out (open-output-file #:exists 'replace "assembly/output.s"))
-       ; (display x86 out)
-       ; (close-output-port out)
+        (define-values (base filename bool) (split-path filepath))
+        (define assem-name (path->string (path-replace-suffix filename ".s")))
+        (define f (format "assembly/~a" assem-name))
+                          
+        (define out (open-output-file #:exists 'replace f))
+        (display x86 out)
+        (close-output-port out)
+
+      #|
      (pretty-display e)
      (newline)
      (pretty-display flat)
@@ -737,11 +752,21 @@
       (newline)
       (pretty-display x86)
       (newline)
+|#
 
 
       )))
 
 
-(run '(program (if (eq? 1 0) 777 (+ 2 (if (eq? (+ 1 1) 2) 40 444)))))
+    
+(define args (current-command-line-arguments))
+
+(if (not (= 1 (vector-length args)))
+    (error "expecting only a file name")
+    (begin
+      (let* ([filename (vector-ref args 0)]
+             [in (read (open-input-file filename))])
+        (code-gen `(program ,in) filename))))
+
 
 
