@@ -33,7 +33,7 @@
 
 (define compiler-list
   ;; Name           Typechecker               Compiler-Passes      Initial interpreter   Test-name    Valid suites
-  `(("conditionals"  ,(type-check (void) 0)    ,passes               ,interp-scheme       "s1"         ,(cdr (assq 0 suite-list)))
+  `(("conditionals"  ,(type-check (void) 0)    ,passes               ,interp-scheme       "s0"         ,(cdr (assq 0 suite-list)))
     ;("reg_int_exp"  #f                        ,reg-int-exp-passes  ,interp-scheme                    (0))
     ;("conditionals" ,conditionals-typechecker ,conditionals-passes ,interp-scheme                    (0 1))
     ;("vectors"      ,vectors-typechecker      ,vectors-passes      ,interp-scheme       (0 1 2))
@@ -43,7 +43,7 @@
     ;("dynamic"      #f                        ,R7-passes           ,(interp-r7 '())     (7))
     ))
 
-(compiler-tests "conditionals"  (type-check (void) 0)    passes      "s1"         (cdr (assq 0 suite-list)))
+;(compiler-tests "conditionals"  (type-check (void) 0)    passes      "s1"         (cdr (assq 0 suite-list)))
 
 #|
 (begin
@@ -52,6 +52,5 @@
   (log "all passed"))
 
 |#
-
 
 

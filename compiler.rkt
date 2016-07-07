@@ -59,7 +59,7 @@
       (match ast
         [`(program ,body) 
          (let ([body-type ((type-check (hash) level) body)])
-           `(program ,body))]
+           `(program (type ,body-type) ,body))]
         ['(read) 'Integer]
         [(? fixnum?) 'Integer]
         [(? boolean?) 'Boolean]
@@ -69,16 +69,25 @@
                [e2-type ((type-check env level) e2)])
            (if (equal? e1-type e2-type)
                'Boolean
-               (error "type-check: eq? expect two operands have the same type" ast e1 e2)))]            
+               (error "type-check: eq? expect two operands have the same type" ast e1 e2)))]
         [`(,cmp-op ,e1 ,e2)
-         #:when (set-member? logic-instructions cmp-op)
+         #:when (set-member? cmp-instructions cmp-op)
+         (let ([e1-type ((type-check env level) e1)]
+               [e2-type ((type-check env level) e2)])
+           (cond [(and (type-integer? e1-type) (type-integer? e2-type)) 'Boolean]
+                 [else 
+                  (error
+                   (format "type-check: ~a expects two operands: ~a(type:~a) and ~a(type:~a) to have the same type Integer (ast: ~a"
+                           cmp-op e1 e1-type e2 e2-type ast))]))]            
+        [`(,logic-op ,e1 ,e2)
+         #:when (set-member? logic-instructions logic-op)
          (let ([e1-type ((type-check env level) e1)]
                [e2-type ((type-check env level) e2)])
            (cond [(and (type-boolean? e1-type) (type-boolean? e2-type)) 'Boolean]
                  [else 
                   (error
-                   (format "type-check: ~a expects two operands: ~a(type:~a) and ~a(type:~a) to have the same type (ast: ~a"
-                           cmp-op e1 e1-type e2 e2-type ast))]))]
+                   (format "type-check: ~a expects two operands: ~a(type:~a) and ~a(type:~a) to have the same type 'Boolean (ast: ~a"
+                           logic-op e1 e1-type e2 e2-type ast))]))]
         [`(let ([,var ,(app (type-check env (add1 level)) var-type)]) ,body)
          (let* ([new-level (add1 level)]
                 [new-env (add-env env var var-type)])
@@ -130,7 +139,7 @@
          (let ([new-x (gensym x)])
            `(let ([,new-x ,new-e])
               ,((uniquify (cons `(,x . ,new-x) env)) body)))]
-        [`(program ,e) `(program ,((uniquify env) e))]
+        [`(program (type ,t) ,e) `(program (type ,t) ,((uniquify env) e))]
         [`(,op ,es ...) #:when (set-member? primitive-set op)
                         `(,op ,@(map (lambda (e) ((uniquify env) e)) es))]
         [else (error "Uniquify could not match " e)]))))
@@ -182,7 +191,10 @@
       (match e
         [(? symbol?) (values e '() '())]
         [(? integer?) (values e '() '())]
-        [(? boolean?) (values e '() '())]                     
+        [(? boolean?) (values e '() '())]
+        [`(program (type ,t) ,e) 
+         (let-values ([(e-exp e-stms e-vars) ((flatten #t) e)])
+           `(program ,e-vars (type ,t) ,@(append e-stms `((return ,e-exp)))))]
         [`(if ,cnd ,thn ,els)
          (let-values ([(new-thn thn-stms thn-vars) ((flatten #t) thn)]
                       [(new-els els-stms els-vars) ((flatten #t) els)])
@@ -204,11 +216,9 @@
                      (values temp 
                              (append es-stms `((assign ,temp ,prim-exp)))
                              (cons temp es-vars)))]))]
-        [`(program ,e) 
-         (let-values ([(e-exp e-stms e-vars) ((flatten #t) e)])
-           `(program ,e-vars ,@(append e-stms `((return ,e-exp)))))]
         
-        [else (error "Flatten could not match " e)]))))
+        
+        [else (error "flatten could not match " e)]))))
 
 (define bin-op->instr
   (lambda (op)
@@ -235,10 +245,10 @@
   (lambda (op)
     (match op
       ['eq? 'e]
-      ['< 'l]
-      ['<= 'le]
-      ['> 'g]
-      ['>= 'ge]
+      ['< 'g]
+      ['<= 'ge]
+      ['> 'l]
+      ['>= 'le]
       [else
        (error "cmp-op->instr could not match " op)])))
 
@@ -303,9 +313,9 @@
             ,(append* (map select-instructions thn))
             ,(append* (map select-instructions els))))]
        
-      [`(program ,vars ,stms ...)
+      [`(program ,vars (type ,t) ,stms ...)
        (let ([new-stms (map (lambda (s) (select-instructions s)) stms)])
-         `(program ,vars ,@(append* new-stms)))]
+         `(program ,vars (type ,t) ,@(append* new-stms)))]
       [else (error "R0/instruction selection, unmatch " e)])))
 
 
@@ -353,7 +363,7 @@
 
 (define liveness
  (lambda (origin-live-after)
-  (lambda (old-instrs)
+  (lambda (old-instrs is-if?)
 
    (define loop 
     (lambda (instrs live-after all-lives instrs-col)
@@ -364,23 +374,25 @@
                       new-live-after 
                       (cons new-live-after all-lives) 
                       (cons new-instr instrs-col)))])))
-   
-   (loop (reverse old-instrs) origin-live-after `(,origin-live-after) '()))))
+
+    (if is-if?
+        (loop (reverse old-instrs) origin-live-after '() '())
+        (loop (reverse old-instrs) origin-live-after `(,origin-live-after) '())))))
 
 (define uncover-live
   (lambda (live-after) 
    (lambda (e)
     (match e
-     [`(program ,vars ,instrs ...) 
-      (let-values ([(new-instrs new-live-after) ((liveness (set)) instrs)])
-        `(program (,vars ,(cdr new-live-after)) ,@new-instrs))]
+     [`(program ,vars (type ,t) ,instrs ...)
+      (let-values ([(new-instrs new-live-after) ((liveness (set)) instrs #f)])
+        `(program (,vars ,(cdr new-live-after)) (type ,t) ,@new-instrs))]
       [`(if (eq? ,e1 ,e2) ,thn ,els)
-       (let-values ([(new-thn thns-before) ((liveness live-after) thn)]
-                    [(new-els elss-before) ((liveness live-after) els)])
+       (let-values ([(new-thn thns-before) ((liveness live-after) thn #t)]
+                    [(new-els elss-before) ((liveness live-after) els #t)])
 
-         (values `(if (eq? ,e1 ,e2) ,new-thn ,(cdr thns-before) ,new-els ,(cdr elss-before))
-                 (set-union (apply set-union (cdr thns-before))
-                            (apply set-union (cdr elss-before))
+         (values `(if (eq? ,e1 ,e2) ,new-thn ,thns-before ,new-els ,elss-before)
+                 (set-union (apply set-union thns-before)
+                            (apply set-union elss-before)
                             (free-var e1)
                             (free-var e2))))]                            
       [else
@@ -398,13 +410,13 @@
     (lambda (ast)
       (match ast
         
-       [`(program (,vars ,lives) ,instrs ...)
+       [`(program (,vars ,lives) (type ,t) ,instrs ...)
         (let ([graph (make-graph vars)]
               [mgraph (make-graph vars)])
           (let ([new-instrs
                  (for/list ([inst instrs] [live-after lives])
                            ((build-interference live-after graph mgraph) inst))])
-            `(program (,vars ,graph ,mgraph) ,@new-instrs)))]
+            `(program (,vars ,graph ,mgraph) (type ,t) ,@new-instrs)))]
         
         [(or `(movq ,src ,dst) `(movzbq ,src ,dst))
          (begin
@@ -541,9 +553,18 @@
 (define reg-spill
   (lambda (color-map)
     
-    (let ([reg-len (vector-length general-registers)]
-          [word-size 8]
-          [number-of-spill 0])
+    (let* ([reg-len (vector-length general-registers)]
+           [word-size 8]
+           [col>=len (filter (lambda (v) (>= (cdr v)
+                                             reg-len))
+                             (hash->list color-map))]
+           [all-col (map (lambda (v) (cdr v)) col>=len)]
+           [s (apply set all-col)]
+           [number-of-spill (set-count s)])
+;           [number-of-spill (set-count (set (map (lambda (v) (cdr v))
+;                                                 (filter (lambda (v) (>= (cdr v)
+;                                                                         reg-len))
+;                                                         (hash->list color-map)))))])
       (values
        (make-hash
         (map
@@ -552,14 +573,10 @@
              ,@(cond [(< (cdr col-map) reg-len)
                       `(reg ,(vector-ref general-registers (cdr col-map)))]
                      [else
-                      ;update stack-size
-                      (cond [(> (cdr col-map) number-of-spill)
-                             (set! number-of-spill (cdr col-map))])
-                          
                       `(deref rbp ,(- (* word-size
                                          (+ 1 (- (cdr col-map) reg-len)))))])))
          (hash->list color-map)))
-       (* word-size number-of-spill)))))
+       (align (* word-size number-of-spill) 16)))))
     
     
 (define assign-homes
@@ -595,11 +612,11 @@
 (define allocate-registers
   (lambda (ast)
     (match ast
-      [`(program (,vars ,graph ,mgraph) ,instrs ...)
+      [`(program (,vars ,graph ,mgraph) (type ,t) ,instrs ...)
        (let* ([annot-graph (annotate graph)]
               [color-map ((color-graph annot-graph mgraph) vars)])
         (let-values ([(reg-map stk-size) (reg-spill color-map)])
-          `(program ,stk-size ,@(map (assign-homes reg-map) instrs))))]
+          `(program ,stk-size (type ,t) ,@(map (assign-homes reg-map) instrs))))]
       [else (error "allocate-registers could not match " ast)])))
                              
     
@@ -613,8 +630,8 @@
 (define lower-conditionals
   (lambda (ast)
     (match ast
-      [`(program ,stk-size ,instrs ...)
-       `(program ,stk-size ,@(append* (map lower-conditionals instrs)))]
+      [`(program ,stk-size (type ,t) ,instrs ...)
+       `(program ,stk-size (type ,t) ,@(append* (map lower-conditionals instrs)))]
       [`(if (eq? ,e1 ,e2) ,thns ,elss)
        (let ([thenlabel (gensym 'then.)]
              [elselabel (gensym 'else.)]
@@ -641,8 +658,8 @@
      [else #f])))
 
   (match e
-    [`(program ,frame-size ,instr ...)
-    `(program ,frame-size ,@(append* (map patch-instructions instr)))]
+    [`(program ,frame-size (type ,t) ,instr ...)
+    `(program ,frame-size (type ,t) ,@(append* (map patch-instructions instr)))]
     [`(cmpq (int ,e1) (int ,e2)) 
      `((movq (int ,e2) (reg rax))
        (cmpq (int ,e1) (reg rax)))]
@@ -684,7 +701,7 @@
        #:when (set-member? instruction-set instr)
        (format "\t~a\t~a\n" instr (print-x86 dst))]
       
-      [`(program ,stack-space ,instrs ...)
+      [`(program ,stack-space (type ,t) ,instrs ...)
        (string-append
          (format "\t.globl ~a\n" (label-name "main"))
          (format "~a:\n" (label-name "main"))
@@ -710,6 +727,42 @@
          (format "\tretq\n"))]
       
       [else (error "print-x86 unmatched " e)])))
+
+
+(define run
+  (lambda (e)
+    
+    (define log
+      (lambda (e)
+        (pretty-display e)
+        (newline)))
+    
+    (let* (
+           [checked ((type-check (void) 0) e)]
+           [uniq ((uniquify '()) checked)]
+           [flat ((flatten #t) uniq)]
+           [instrs (select-instructions flat)]
+           [liveness ((uncover-live (void)) instrs)]
+           [graph ((build-interference (void) (void) (void)) liveness)]
+           [allocs (allocate-registers graph)]
+           [lower-if (lower-conditionals allocs)]
+           [patched (patch-instructions lower-if)]
+           [x86 (print-x86 patched)]
+           )
+      
+    (log checked)
+    (log uniq)
+    (log flat)
+    (log instrs)
+    (log liveness)
+    (log graph)
+    (log allocs)
+    (log lower-if)
+    (log patched)
+    (log x86)
+
+      
+    )))
 
 
 (define code-gen
@@ -769,4 +822,13 @@
         (code-gen `(program ,in) filename))))
 
 |#
+
+
+(run '(program
+       (let ([a 1])                  ; a -> 0
+  (let ([b 42])               ; b -> 1
+    (let ([f b])              ; f -> 2
+      (let ([e (+ a b)])      ; e -> 0
+       (let ([d f])           ; d -> 0
+          d)))))))
 
