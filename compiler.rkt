@@ -36,7 +36,7 @@
 (define look-up
   (lambda (env key)
     (if (hash-has-key? env key)
-        (car (hash-ref env key))
+        (hash-ref env key)
         (error "no value found for key" env key))))
 
 (define add1 (lambda (x) (+ 1 x)))
@@ -63,7 +63,7 @@
         ['(read) 'Integer]
         [(? fixnum?) 'Integer]
         [(? boolean?) 'Boolean]
-        [(? symbol?) (look-up env ast )]
+        [(? symbol?) (car (look-up env ast))]
         [`(eq? ,e1 ,e2)
          (let ([e1-type ((type-check env level) e1)]
                [e2-type ((type-check env level) e2)])
@@ -169,7 +169,7 @@
                            (if (eq? #t ,cmp-arg)
                                (,@thn-stms (assign ,if-temp ,thn-temp))
                                (,@els-stms (assign ,if-temp ,els-temp))))
-                         (cons if-temp (append e1-vars e2-vars vars)))))]
+                         `(,if-temp ,cmp-arg ,@(append e1-vars e2-vars vars)))))]
             [`(let ([,x ,e]) ,body) 
              (let*-values ([(new-e e-stms e-vars) ((flatten #f) e)]
                            [(new-body body-stms body-vars)
@@ -435,8 +435,8 @@
                      (add-edge graph v r)))
            ast)]
         [`(if ,cnd ,thn ,thn-after ,els ,els-after)
-          (let ([new-thn (map (lambda (instr) ((build-interference thn-after graph mgraph) instr)) thn)]
-                [new-els (map (lambda (instr) ((build-interference els-after graph mgraph) instr)) els)])
+          (let ([new-thn (map (lambda (instr live-after) ((build-interference live-after graph mgraph) instr )) thn thn-after)]
+                [new-els (map (lambda (instr live-after) ((build-interference live-after graph mgraph) instr )) els els-after)])
            `(if ,cnd ,new-thn ,new-els))]
 
         [else
@@ -462,13 +462,13 @@
 (define choose-color
   (lambda (var interfered mgraph col-map satu)
     (let* ([move-related-vars (if (hash-has-key? mgraph var)
-                                  (hash-ref mgraph var)
+                                  (look-up mgraph var)
                                   (set))]
            [non-interfered (set-subtract move-related-vars
                                         interfered)]
            [non-interfered-alloc (filter (lambda (var) (hash-has-key? col-map var))
                                          (set->list non-interfered))])
-      (cond [(not (null? non-interfered-alloc)) (hash-ref col-map (car non-interfered-alloc))]
+      (cond [(not (null? non-interfered-alloc)) (look-up col-map (car non-interfered-alloc))]
             [(null? satu) 0]
             [(null? (cdr satu)) (if (= 0 (car satu)) 1 0)]
             [else
@@ -509,11 +509,11 @@
 (define update-heap-saturation!
   (lambda (heap key new-color)
     (let* ([hash (heap->hash heap)]
-           [adjs (car (hash-ref hash key))])
+           [adjs (car (look-up hash key))])
       (set-for-each adjs
                     (lambda (var)
-                      (let ([adj (car (hash-ref hash var))]
-                            [sat (cadr (hash-ref hash var))])
+                      (let ([adj (car (look-up hash var))]
+                            [sat (cadr (look-up hash var))])
                         (hash-set! hash var `(,adj ,(set-add sat new-color))))))
       (hash->heap hash))))
   
@@ -524,8 +524,8 @@
       (lambda (node-heap adjs col)
         (set-for-each adjs
                       (lambda (var)
-                        (let ([adj (car (hash-ref graph var))]
-                              [sat (cadr (hash-ref graph var))])
+                        (let ([adj (car (look-up graph var))]
+                              [sat (cadr (look-up graph var))])
                           (hash-set! graph var `(,adj ,(set-add sat col)))
                           (cond [(heap-contains? node-heap var)
                                  (begin
@@ -586,7 +586,7 @@
       (match e
         ; [`(program ,stk-size ,reg-map ,instrs ...)
         ;  `(program ,stk-size ,@(map (lambda (instr) ((assign-homes reg-map) instr)) instrs))]
-        [`(var ,x) (hash-ref reg-map x)]
+        [`(var ,x) (look-up reg-map x)]
         [`(int ,i) `(int ,i)]
         [`(reg ,r) `(reg ,r)]
         [`(byte-reg ,r) `(byte-reg ,r)]
@@ -825,10 +825,12 @@
 
 
 (run '(program
-       (let ([a 1])                  ; a -> 0
-  (let ([b 42])               ; b -> 1
-    (let ([f b])              ; f -> 2
-      (let ([e (+ a b)])      ; e -> 0
-       (let ([d f])           ; d -> 0
-          d)))))))
+(let ([v 1])                ; v = 1       v->rbx
+  (let ([w 46])             ; w = 46      w->8
+    (let ([x (+ v 7)])      ; x = 8       x->16
+      (let ([y  (+ 4 x)])   ; y = 12      y->rbx
+  (let ([z  (+ x w)]) ; z = 54      z->16
+    (+ z (- y)))))))      ; z - y = 42
+  
+))
 
