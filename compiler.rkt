@@ -160,16 +160,14 @@
             [`(,cmp ,e1 ,e2) #:when (set-member? cmp-instructions cmp) 
              (let-values ([(new-e1 e1-stms e1-vars) ((flatten #t) e1)]
                           [(new-e2 e2-stms e2-vars) ((flatten #t) e2)])
-               (let ([if-temp (gensym 'if.)]
-                     [cmp-arg (gensym 'temp)])
+               (let ([if-temp (gensym 'if.)])
                  (values if-temp
                          `(,@e1-stms
                            ,@e2-stms
-                           (assign ,cmp-arg (,cmp ,new-e1 ,new-e2))
-                           (if (eq? #t ,cmp-arg)
+                           (if (,cmp ,new-e1 ,new-e2)
                                (,@thn-stms (assign ,if-temp ,thn-temp))
                                (,@els-stms (assign ,if-temp ,els-temp))))
-                         `(,if-temp ,cmp-arg ,@(append e1-vars e2-vars vars)))))]
+                         `(,if-temp ,@(append e1-vars e2-vars vars)))))]
             [`(let ([,x ,e]) ,body) 
              (let*-values ([(new-e e-stms e-vars) ((flatten #f) e)]
                            [(new-body body-stms body-vars)
@@ -245,10 +243,10 @@
   (lambda (op)
     (match op
       ['eq? 'e]
-      ['< 'g]
-      ['<= 'ge]
-      ['> 'l]
-      ['>= 'le]
+      ['< 'l]
+      ['<= 'le]
+      ['> 'g]
+      ['>= 'ge]
       [else
        (error "cmp-op->instr could not match " op)])))
 
@@ -386,11 +384,11 @@
      [`(program ,vars (type ,t) ,instrs ...)
       (let-values ([(new-instrs new-live-after) ((liveness (set)) instrs #f)])
         `(program (,vars ,(cdr new-live-after)) (type ,t) ,@new-instrs))]
-      [`(if (eq? ,e1 ,e2) ,thn ,els)
+      [`(if (,cmp-op ,e1 ,e2) ,thn ,els)
        (let-values ([(new-thn thns-before) ((liveness live-after) thn #t)]
                     [(new-els elss-before) ((liveness live-after) els #t)])
 
-         (values `(if (eq? ,e1 ,e2) ,new-thn ,thns-before ,new-els ,elss-before)
+         (values `(if (,cmp-op ,e1 ,e2) ,new-thn ,thns-before ,new-els ,elss-before)
                  (set-union (apply set-union thns-before)
                             (apply set-union elss-before)
                             (free-var e1)
@@ -592,6 +590,8 @@
         [`(byte-reg ,r) `(byte-reg ,r)]
         [`(callq ,f) `(callq ,f)]
         [`(set ,cc ,arg) `(set ,cc ,(recur arg))]
+        [`(,cmp-op ,e1 ,e2) #:when (set-member? cmp-instructions cmp-op)
+         `(,cmp-op ,(recur e1) ,(recur e2))]
         [`(,instr ,src ,dst)
          #:when (set-member? instruction-set instr)
          `(,instr ,(recur src)
@@ -632,12 +632,12 @@
     (match ast
       [`(program ,stk-size (type ,t) ,instrs ...)
        `(program ,stk-size (type ,t) ,@(append* (map lower-conditionals instrs)))]
-      [`(if (eq? ,e1 ,e2) ,thns ,elss)
+      [`(if (,cmp-op ,e1 ,e2) ,thns ,elss)
        (let ([thenlabel (gensym 'then.)]
              [elselabel (gensym 'else.)]
              [endlabel (gensym 'end.)])
-       `((cmpq ,e1 ,e2)
-         (jmp-if e ,thenlabel)
+       `((cmpq ,e2 ,e1)
+         (jmp-if ,(cmp-op->instr cmp-op) ,thenlabel)
          ,@(append* (map lower-conditionals elss))
          (jmp ,endlabel)
          (label ,thenlabel)
@@ -823,14 +823,4 @@
 
 |#
 
-
-(run '(program
-(let ([v 1])                ; v = 1       v->rbx
-  (let ([w 46])             ; w = 46      w->8
-    (let ([x (+ v 7)])      ; x = 8       x->16
-      (let ([y  (+ 4 x)])   ; y = 12      y->rbx
-  (let ([z  (+ x w)]) ; z = 54      z->16
-    (+ z (- y)))))))      ; z - y = 42
-  
-))
 
