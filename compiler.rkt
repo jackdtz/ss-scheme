@@ -21,18 +21,6 @@
   (set 'addq 'negq 'movq 'subq 'movzbq 'cmpq 'xorq))
 
 
-
-; (define caller-save (set 'rdx 'rcx 'rsi 'rdi 'r8 'r9 'r10))
-
-; (define general-registers (vector 'rbx 'rcx 'rdx 'rsi 'rdi
-;                                   'r8 'r9 'r10 'r12 
-;                                   'r13 'r14))
-
-; (define (align n alignment)
-;   (cond [(eq? 0 (modulo n alignment)) n]
-;         [else
-;          (+ n (- alignment (modulo n alignment)))]))
-
 (define look-up
   (lambda (env key)
     (if (hash-has-key? env key)
@@ -123,7 +111,6 @@
                                   cmp ast type-cmp))]))]))))
 
 
-         
 (define uniquify
   (lambda (env)
     (lambda (e)
@@ -476,8 +463,6 @@
                (car (sort (set->list diff) <)))]))))
            
           
-
-
 (define node-adjs  (lambda (x) (cadr x)))
 
 (define node-saturations (lambda (x) (caddr x)))
@@ -550,19 +535,12 @@
 
 (define reg-spill
   (lambda (color-map)
-    
-    (let* ([reg-len (vector-length general-registers)]
-           [word-size 8]
-           [col>=len (filter (lambda (v) (>= (cdr v)
-                                             reg-len))
-                             (hash->list color-map))]
-           [all-col (map (lambda (v) (cdr v)) col>=len)]
-           [s (apply set all-col)]
-           [number-of-spill (set-count s)])
-;           [number-of-spill (set-count (set (map (lambda (v) (cdr v))
-;                                                 (filter (lambda (v) (>= (cdr v)
-;                                                                         reg-len))
-;                                                         (hash->list color-map)))))])
+    (let* ([word-size 8]
+           [reg-len (vector-length general-registers)]
+           [spilled-color (map (lambda (v) (cdr v))
+                               (filter (lambda (v) (>= (cdr v) reg-len))
+                                       (hash->list color-map)))]
+           [number-of-spill (set-count (apply set spilled-color))])
       (values
        (make-hash
         (map
@@ -582,8 +560,6 @@
     (lambda (e)
       (define recur (assign-homes reg-map))
       (match e
-        ; [`(program ,stk-size ,reg-map ,instrs ...)
-        ;  `(program ,stk-size ,@(map (lambda (instr) ((assign-homes reg-map) instr)) instrs))]
         [`(var ,x) (look-up reg-map x)]
         [`(int ,i) `(int ,i)]
         [`(reg ,r) `(reg ,r)]
@@ -605,10 +581,8 @@
               ,(map recur thn)
               ,(map recur els))]
         [else (error "assign-homes could not match " e)]))))      
-      
 
-; (program (vars graph) instrs) -> (program (vars) colored-instrs)
-; color-map : var -> register / stack location
+
 (define allocate-registers
   (lambda (ast)
     (match ast
@@ -619,11 +593,6 @@
           `(program ,stk-size (type ,t) ,@(map (assign-homes reg-map) instrs))))]
       [else (error "allocate-registers could not match " ast)])))
                              
-    
-
-
-
-
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 
@@ -646,8 +615,6 @@
       [else `(,ast)])))
 
         
-
-
 (define patch-instructions
  (lambda (e)
 
@@ -675,8 +642,6 @@
      (cond [(and (in-memory? src) (in-memory? dst))
             `((movq ,src (reg rax)) (,instr (reg rax) ,dst))]
            [else `((,instr ,src ,dst))])]
-    
-    
     [else `(,e)])))
   
   
@@ -749,7 +714,6 @@
            [patched (patch-instructions lower-if)]
            [x86 (print-x86 patched)]
            )
-      
     (log checked)
     (log uniq)
     (log flat)
@@ -760,67 +724,6 @@
     (log lower-if)
     (log patched)
     (log x86)
-
-      
     )))
-
-
-(define code-gen
-  (lambda (e filepath)
-
-    (let* (
-           ; [checked ((type-check (void) 0) e)]
-           [uniq ((uniquify '()) e)]
-           [flat ((flatten #t) uniq)]
-           [instrs (select-instructions flat)]
-           [liveness ((uncover-live (void)) instrs)]
-           [graph ((build-interference (void) (void) (void)) liveness)]
-           [allocs (allocate-registers graph)]
-           [lower-if (lower-conditionals allocs)]
-           [patched (patch-instructions lower-if)]
-           [x86 (print-x86 patched)]
-           )
-        (define-values (base filename bool) (split-path filepath))
-        (define assem-name (path->string (path-replace-suffix filename ".s")))
-        (define f (format "assembly/~a" assem-name))
-                          
-        (define out (open-output-file #:exists 'replace f))
-        (display x86 out)
-        (close-output-port out)
-
-      #|
-     (pretty-display e)
-     (newline)
-     (pretty-display flat)
-     (newline)
-     (pretty-display instrs)
-     (newline)
-     (pretty-display liveness)
-     (newline)
-      (pretty-display allocs)
-      (newline)
-      (pretty-display lower-if )
-      (newline)
-      (pretty-display patched)
-      (newline)
-      (pretty-display x86)
-      (newline)
-|#
-
-
-      )))
-
-
-#|    
-(define args (current-command-line-arguments))
-
-(if (not (= 1 (vector-length args)))
-    (error "expecting only a file name")
-    (begin
-      (let* ([filename (vector-ref args 0)]
-             [in (read (open-input-file filename))])
-        (code-gen `(program ,in) filename))))
-
-|#
 
 
