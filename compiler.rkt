@@ -27,7 +27,6 @@
         (hash-ref env key)
         (error "no value found for key" env key))))
 
-(define add1 (lambda (x) (+ 1 x)))
 
 (define add-env
   (lambda (env key val)
@@ -41,27 +40,42 @@
 
 
 (define type-check
-  (lambda (env level)
+  (lambda (env)
     (lambda (ast)
-      ; (define recur (type-check env level))
+      (define recur (type-check env))
       (match ast
         [`(program ,body) 
-         (let ([body-type ((type-check (hash) level) body)])
+         (let ([body-type ((type-check (hash)) body)])
            `(program (type ,body-type) ,body))]
         ['(read) 'Integer]
         [(? fixnum?) 'Integer]
         [(? boolean?) 'Boolean]
         [(? symbol?) (car (look-up env ast))]
+        
+        ; Vector
+        [`(void) (values `(has-type (void) Void) 'Void)]
+
+        [`(Vector ,(app (recur type-check) e* t*) ...)
+         (let ([t `(Vector ,@t*)])
+           (values `(has-type (vector ,@e*) ,t) t))]  
+        [`(vector-ref ,(app recur v-type) ,ind)
+         (match v-type
+           [`(Vector ,ts ...)
+            (unless (and (exact-nonnegative-integer? ind)
+                         (< ind (length ts)))
+              (error 'type-check "invalid index ~a[~a]" ast ind))
+            (let ([ret-elt (list-ref )]))])]
+        
         [`(eq? ,e1 ,e2)
-         (let ([e1-type ((type-check env level) e1)]
-               [e2-type ((type-check env level) e2)])
+         (let ([e1-type (recur e1)]
+               [e2-type (recur e2)])
            (if (equal? e1-type e2-type)
                'Boolean
                (error "type-check: eq? expect two operands have the same type" ast e1 e2)))]
         [`(,cmp-op ,e1 ,e2)
          #:when (set-member? cmp-instructions cmp-op)
-         (let ([e1-type ((type-check env level) e1)]
-               [e2-type ((type-check env level) e2)])
+         (let ([e1-type (recur e1)]
+               [e2-type (recur e2)])
            (cond [(and (type-integer? e1-type) (type-integer? e2-type)) 'Boolean]
                  [else 
                   (error
@@ -69,28 +83,27 @@
                            cmp-op e1 e1-type e2 e2-type ast))]))]            
         [`(,logic-op ,e1 ,e2)
          #:when (set-member? logic-instructions logic-op)
-         (let ([e1-type ((type-check env level) e1)]
-               [e2-type ((type-check env level) e2)])
+         (let ([e1-type (recur e1)]
+               [e2-type (recur e2)])
            (cond [(and (type-boolean? e1-type) (type-boolean? e2-type)) 'Boolean]
                  [else 
                   (error
                    (format "type-check: ~a expects two operands: ~a(type:~a) and ~a(type:~a) to have the same type 'Boolean (ast: ~a"
                            logic-op e1 e1-type e2 e2-type ast))]))]
-        [`(let ([,var ,(app (type-check env (add1 level)) var-type)]) ,body)
-         (let* ([new-level (add1 level)]
-                [new-env (add-env env var var-type)])
-           ((type-check new-env new-level) body))]
-        [`(not ,(app (type-check env level) type))
+        [`(let ([,var ,(app (type-check env) var-type)]) ,body)
+         (let ([new-env (add-env env var var-type)])
+           ((type-check new-env) body))]
+        [`(not ,(app recur type))
          (match type
            ['Boolean 'Boolean]
            [else (error "type-check: 'not expects a Boolean" ast type)])]
-        [`(- ,(app (type-check env level) type))
+        [`(- ,(app recur type))
          (match type
            ['Integer 'Integer]
            [else (error "type-check: '- expects an Integer" ast type)])]
         [`(+ ,e1 ,e2)
-         (let ([type1 ((type-check env level) e1)]
-               [type2 ((type-check env level) e2)])
+         (let ([type1 (recur e1)]
+               [type2 (recur e2)])
            (cond [(and (type-integer? type1) (type-integer? type2)) 'Integer]
                  [(type-integer? type1) 
                   (error "type-check: '+ expects e2 to be an Integer" ast e2)]
@@ -99,9 +112,9 @@
                  [else 
                   (error "type-check: '+ expects e1, e2 to be Integer" ast e1 e2)]))]
         [`(if ,cmp ,t ,f) 
-         (let ([type-cmp ((type-check env level) cmp)]
-               [type-t ((type-check env level) t)]
-               [type-f ((type-check env level) f)])
+         (let ([type-cmp (recur cmp)]
+               [type-t (recur t)]
+               [type-f (recur f)])
            (cond [(and (type-boolean? type-cmp) (same-type? type-t type-f)) type-t]
                  [(not (same-type? type-t type-f)) 
                   (error (format "type-check: (thn:~a) and (els:~a) from ~a have different type ~a and ~a" 
