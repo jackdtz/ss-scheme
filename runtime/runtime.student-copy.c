@@ -235,6 +235,17 @@ static void copy_vector(int64_t** vector_ptr_loc);
 
 void cheney(int64_t** rootstack_ptr)
 {
+
+  int64_t *scan_ptr = tospace_begin;
+  free_ptr = tospace_begin;
+
+  // construct initial queue
+  for (int64_t **root_loc = rootstack_ptr;
+       root_loc != rootstack_end;
+       root_loc++) {
+    copy_vector(root_loc);
+  }
+
   
 }
 
@@ -291,7 +302,32 @@ void cheney(int64_t** rootstack_ptr)
 */
 void copy_vector(int64_t** vector_ptr_loc)
 {
-  
+  int64_t *old_vector_ptr = *vector_ptr_loc;
+
+  int64_t tag = old_vector_ptr[0];
+
+  if (is_forwarding(tag)) {
+    // update vector_ptr_loc to point to the new location
+    // note that if a tag is forwarding then the entire tag
+    // is a pointer. The lower 3 bits of a pointer are always 0 sice
+    *vector_ptr_loc = (int64_t *)tag;
+    return;
+  }
+
+  int vec_len = get_length(tag);
+
+  int64_t *new_vector_ptr = free_ptr;
+
+  for (int i = 0; i != vec_len + 1; i++) {
+    new_vector_ptr[i] = old_vector_ptr[i];
+  }
+
+  // update the tag to forwarding pointer
+  old_vector_ptr[0] = (int64_t)new_vector_ptr;
+
+  free_ptr += (vec_len + 1);
+
+  *vector_ptr_loc = (int64_t *)((int64_t)new_vector_ptr);
 }
 
 
