@@ -246,6 +246,13 @@ void cheney(int64_t** rootstack_ptr)
     copy_vector(root_loc);
   }
 
+
+  while (scan_ptr != free_ptr) {
+    if (is_forwarding(*scan_ptr)) {
+      
+    }
+  }
+
   
 }
 
