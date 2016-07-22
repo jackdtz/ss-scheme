@@ -248,10 +248,33 @@ void cheney(int64_t** rootstack_ptr)
 
 
   while (scan_ptr != free_ptr) {
-    if (is_forwarding(*scan_ptr)) {
-      
+    int64_t tag = *scan_ptr;
+
+    int len = get_length(tag);
+    
+    int64_t bitfield = get_ptr_bitfield(tag);
+
+    int64_t *next_ptr = scan_ptr + len + 1;
+
+    scan_ptr += 1;
+    while (scan_ptr != next_ptr) {
+      if (bitfield & 1) {
+        copy_vector((int64_t **)scan_ptr);
+      }
+      bitfield = bitfield >> 1;
+      scan_ptr += 1;
     }
   }
+
+  // swap fromspace and tospace 
+  int64_t *temp_begin = fromspace_begin;
+  int64_t *temp_end = fromspace_end;
+
+  fromspace_begin = tospace_begin;
+  fromspace_end = tospace_end;
+  tospace_begin = temp_begin;
+  tospace_end = temp_end;
+
 
   
 }

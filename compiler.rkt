@@ -58,13 +58,13 @@
         [`(Vector ,(app (recur type-check) e* t*) ...)
          (let ([t `(Vector ,@t*)])
            (values `(has-type (vector ,@e*) ,t) t))]  
-        [`(vector-ref ,(app recur v-type) ,ind)
-         (match v-type
-           [`(Vector ,ts ...)
-            (unless (and (exact-nonnegative-integer? ind)
-                         (< ind (length ts)))
-              (error 'type-check "invalid index ~a[~a]" ast ind))
-            (let ([ret-elt (list-ref )]))])]
+        ; [`(vector-ref ,(app recur v-type) ,ind)
+        ;  (match v-type
+        ;    [`(Vector ,ts ...)
+        ;     (unless (and (exact-nonnegative-integer? ind)
+        ;                  (< ind (length ts)))
+        ;       (error 'type-check "invalid index ~a[~a]" ast ind))
+        ;     (let ([ret-elt (list-ref )]))])]
         
         [`(eq? ,e1 ,e2)
          (let ([e1-type (recur e1)]
@@ -127,21 +127,26 @@
 (define uniquify
   (lambda (env)
     (lambda (e)
+      (define recur (uniquify env))
       (match e
         [(? symbol?) (cdr (assq e env))]
         [(? integer?) e]
         [(? boolean?) e]
         [`(if ,cnd ,thn ,els)
-         `(if ,((uniquify env) cnd)
-              ,((uniquify env) thn)
-              ,((uniquify env) els))]
-        [`(let ([,x ,(app (uniquify env) new-e)]) ,body)
+         `(if ,(recur cnd)
+              ,(recur thn)
+              ,(recur els))]
+        [`(let ([,x ,(app recur new-e)]) ,body)
          (let ([new-x (gensym x)])
            `(let ([,new-x ,new-e])
               ,((uniquify (cons `(,x . ,new-x) env)) body)))]
-        [`(program (type ,t) ,e) `(program (type ,t) ,((uniquify env) e))]
+        [`(vector ,exp ...) `(vector ,@(map recur exp))]
+        [`(vector-ref ,exp ,int) `(vector-ref ,(recur exp) ,int)]
+        [`(vector-set! ,e1 ,int ,e2) `(vector-set! ,(recur e1) ,int ,(recur e2))]
+        ; [`(program (type ,t) ,e) `(program (type ,t) ,(recur e))]
+        [`(program ,e) `(program ,(recur e))]
         [`(,op ,es ...) #:when (set-member? primitive-set op)
-                        `(,op ,@(map (lambda (e) ((uniquify env) e)) es))]
+                        `(,op ,@(map (lambda (e) (recur e)) es))]
         [else (error "Uniquify could not match " e)]))))
 
 (define flatten
@@ -190,9 +195,24 @@
         [(? symbol?) (values e '() '())]
         [(? integer?) (values e '() '())]
         [(? boolean?) (values e '() '())]
-        [`(program (type ,t) ,e) 
+        [`(vector ,(app (flatten #t) es* es-stms* es-vars*) ...)
+         (let ([rtn `(vector ,@es*)]
+               [stms (append* es-stms*)]
+               [vars (append* es-vars*)]
+               [rtn-tmp (gensym 'temp.)])
+           (values rtn-tmp
+                   (append stms `((assign ,rtn-tmp ,rtn)))
+                   (cons rtn-tmp vars)))]
+        [`(vector-ref ,vec ,int)
+         (let-values ([(new-e vec-stms vec-vars) ((flatten #t) vec)])
+           (let ([new-temp (gensym 'temp.)])
+             (values new-temp
+                     (append vec-stms `((assign ,new-temp (vector-ref ,new-e ,int))))
+                     (cons new-temp vec-vars))))]
+
+        [`(program ,e) 
          (let-values ([(e-exp e-stms e-vars) ((flatten #t) e)])
-           `(program ,e-vars (type ,t) ,@(append e-stms `((return ,e-exp)))))]
+           `(program ,e-vars ,@(append e-stms `((return ,e-exp)))))]
         [`(if ,cnd ,thn ,els)
          (let-values ([(new-thn thn-stms thn-vars) ((flatten #t) thn)]
                       [(new-els els-stms els-vars) ((flatten #t) els)])
@@ -210,7 +230,7 @@
                [es-vars (append* es-vars*)])               
            (case need-temp
              [(#f) (values prim-exp es-stms es-vars)]
-             [(#t) (let ([temp (gensym 'temp)])
+             [(#t) (let ([temp (gensym 'temp.)])
                      (values temp 
                              (append es-stms `((assign ,temp ,prim-exp)))
                              (cons temp es-vars)))]))]
@@ -738,5 +758,14 @@
     (log patched)
     (log x86)
     )))
+
+
+(define t
+  (lambda (r)
+    ; (define tc (type-check '()))
+    ((flatten #t) ((uniquify '()) r))))
+
+(t '(program
+     (vector-ref (vector-ref (vector (vector 42)) 0) 0)))
 
 

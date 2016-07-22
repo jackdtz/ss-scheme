@@ -244,14 +244,14 @@ void collect(int64_t** rootstack_ptr, uint64_t bytes_requested)
     for (unsigned char i = 0; i != len; i++){
       if ((isPtrBits >> i) & 1){
         int64_t* ptr = (int64_t*) data[i];
-	if (is_ptr(ptr)) {
-	  /*printf("\ti: %d, ptr: %lld, to_ptr: %lld", i, 
-		 (int64_t)ptr,
-		 (int64_t)to_ptr(ptr));*/
-	  int64_t* real_ptr = to_ptr(ptr);
-	  assert(real_ptr < fromspace_end);
-	  assert(real_ptr >= fromspace_begin);
-	}
+        if (is_ptr(ptr)) {
+          /*printf("\ti: %d, ptr: %lld, to_ptr: %lld", i, 
+          (int64_t)ptr,
+          (int64_t)to_ptr(ptr));*/
+          int64_t* real_ptr = to_ptr(ptr);
+          assert(real_ptr < fromspace_end);
+          assert(real_ptr >= fromspace_begin);
+        }
       }
     }
   }
