@@ -45,82 +45,117 @@
       (define recur (type-check env))
       (match ast
         [`(program ,body) 
-         (let ([body-type ((type-check (hash)) body)])
-           `(program (type ,body-type) ,body))]
-        ['(read) 'Integer]
-        [(? fixnum?) 'Integer]
-        [(? boolean?) 'Boolean]
-        [(? symbol?) (car (look-up env ast))]
+         (let-values ([(body-e body-type) ((type-check (hash)) body)])
+           `(program (type ,body-type) ,body-e))]
+        ['(read) (values `(has-type (read) Integer) 'Integer)]
+        [(? fixnum?) (values `(has-type ,ast Integer) 'Integer)]
+        [(? boolean?) (values `(has-type ,ast Boolean) 'Boolean)]
+        [(? symbol?)
+         (let ([ty (car (look-up env ast))])
+           (values `(has-type ,ast ,ty) ty))] 
         
         ; Vector
         [`(void) (values `(has-type (void) Void) 'Void)]
-
-        [`(Vector ,(app (recur type-check) e* t*) ...)
+        [`(vector ,(app recur e* t*)...)
          (let ([t `(Vector ,@t*)])
            (values `(has-type (vector ,@e*) ,t) t))]  
-        ; [`(vector-ref ,(app recur v-type) ,ind)
-        ;  (match v-type
-        ;    [`(Vector ,ts ...)
-        ;     (unless (and (exact-nonnegative-integer? ind)
-        ;                  (< ind (length ts)))
-        ;       (error 'type-check "invalid index ~a[~a]" ast ind))
-        ;     (let ([ret-elt (list-ref )]))])]
-        
-        [`(eq? ,e1 ,e2)
-         (let ([e1-type (recur e1)]
-               [e2-type (recur e2)])
-           (if (equal? e1-type e2-type)
-               'Boolean
-               (error "type-check: eq? expect two operands have the same type" ast e1 e2)))]
-        [`(,cmp-op ,e1 ,e2)
+        [`(vector-ref ,(app recur e ty) ,ind)
+         (match ty
+           [`(Vector ,ts ...)
+            (unless (and (exact-nonnegative-integer? ind)
+                         (< ind (length ts)))
+              (error 'type-check "invalid index ~a[~a]" ast ind))
+            (let ([ret-ty (list-ref ts ind)])
+              (values `(has-type (vector-ref ,e (has-type ,ind Integer)) ,ret-ty)
+                      ret-ty))]
+           [else
+            (error "expected a vector type in vector-ref, not" ty)])]
+        [`(vector-set! ,(app recur vec-e vec-ty) ,ind ,(app recur val-e val-ty))
+         (match vec-ty
+           [`(Vector ,ts ...)
+            (unless (and (exact-nonnegative-integer? ind)
+                         (< ind (length ts)))
+              (error 'type-check "invalid index ~a[~a]" ast ind))
+            (define expected-type (list-ref ts ind))
+            (unless (equal? expected-type val-ty)
+              (error (format "type mismatch in ~a, expect type ~a, but get ~a " ast expected-type val-ty)))
+            (values `(has-type (vector-set! ,vec-e
+                                            (has-type ,ind Integer)
+                                            ,val-e)
+                               Void)
+                    'Void)]
+           [else
+            (display (format "vector: ~a" vec-ty))
+            (error (format "expected a vector type in vector-set!, not ~a in ~a" vec-ty ast))])]
+        [`(eq? ,(app recur e1* e1-ty)
+               ,(app recur e2* e2-ty))
+         (match* (e1-ty e2-ty)
+           [(`(Vector ,ts1 ...) `(Vector ,ts2 ...))
+            (values `(has-type (eq? e1* e2*) Boolean) 'Boolean)]
+           [(_ _)
+            (unless (equal? e1-ty e2-ty)
+              (error "type-check: eq? expect two operands have the same type" ast e1* e2*))])]
+        [`(,cmp-op ,(app recur e1* e1-ty)
+                   ,(app recur e2* e2-ty))
          #:when (set-member? cmp-instructions cmp-op)
-         (let ([e1-type (recur e1)]
-               [e2-type (recur e2)])
-           (cond [(and (type-integer? e1-type) (type-integer? e2-type)) 'Boolean]
-                 [else 
-                  (error
-                   (format "type-check: ~a expects two operands: ~a(type:~a) and ~a(type:~a) to have the same type Integer (ast: ~a"
-                           cmp-op e1 e1-type e2 e2-type ast))]))]            
-        [`(,logic-op ,e1 ,e2)
+         (match* (e1-ty e2-ty)
+           [('Integer 'Integer)
+            (values `(has-type (,cmp-op e1* e2*) Boolean) 'Boolean)]
+            [(_ _) 
+             (error
+              (format "type-check: ~a expects two operands: ~a(type:~a) and ~a(type:~a) to have the same type Integer (ast: ~a"
+                      cmp-op e1* e1-ty e2* e2-ty ast))])]
+        
+        [`(,logic-op ,(app recur e1* e1-ty)
+                     ,(app recur e2* e2-ty))
          #:when (set-member? logic-instructions logic-op)
-         (let ([e1-type (recur e1)]
-               [e2-type (recur e2)])
-           (cond [(and (type-boolean? e1-type) (type-boolean? e2-type)) 'Boolean]
-                 [else 
-                  (error
-                   (format "type-check: ~a expects two operands: ~a(type:~a) and ~a(type:~a) to have the same type 'Boolean (ast: ~a"
-                           logic-op e1 e1-type e2 e2-type ast))]))]
-        [`(let ([,var ,(app (type-check env) var-type)]) ,body)
+         (match* (e1-ty e2-ty)
+           [('Boolean 'Boolean)
+            (values `(has-type (,logic-op e1* e2*) Boolean) 'Boolean)]
+            [(_ _) 
+             (error
+              (format "type-check: ~a expects two operands: ~a(type:~a) and ~a(type:~a) to have the same type 'Boolean (ast: ~a"
+                      logic-op e1* e1-ty e2* e2-ty ast))])]
+        
+        [`(let ([,var ,(app recur var-e var-type)]) ,body)
          (let ([new-env (add-env env var var-type)])
-           ((type-check new-env) body))]
-        [`(not ,(app recur type))
+           (let-values ([(body-e body-ty) ((type-check new-env) body)])
+             (values `(has-type (let ([,var ,var-e]) ,body-e))
+                     body-ty)))]
+        
+        [`(not ,(app recur e type))
          (match type
-           ['Boolean 'Boolean]
+           ['Boolean (values `(has-type (not ,e) Boolean) 'Boolean)]
            [else (error "type-check: 'not expects a Boolean" ast type)])]
-        [`(- ,(app recur type))
+        
+        [`(- ,(app recur e type))
          (match type
-           ['Integer 'Integer]
+           ['Integer (values `(has-type (- ,e) Integer) 'Integer)]
            [else (error "type-check: '- expects an Integer" ast type)])]
-        [`(+ ,e1 ,e2)
-         (let ([type1 (recur e1)]
-               [type2 (recur e2)])
-           (cond [(and (type-integer? type1) (type-integer? type2)) 'Integer]
-                 [(type-integer? type1) 
-                  (error "type-check: '+ expects e2 to be an Integer" ast e2)]
-                 [(type-integer? type2) 
-                  (error "type-check: '+ expects e1 to be an Integer" ast e1)]
-                 [else 
-                  (error "type-check: '+ expects e1, e2 to be Integer" ast e1 e2)]))]
+        
+        [`(+ ,(app recur e1 e1-ty)
+             ,(app recur e2 e2-ty))
+         (match* (e1-ty e2-ty)
+           [('Integer 'Integer) (values `(has-type (+ ,e1 ,e2) Integer) 'Integer)]
+           [('Integer _)
+            (error "type-check: '+ expects e2 to be an Integer" ast e2)]
+           [(_ 'Integer)
+            (error "type-check: '+ expects e1 to be an Integer" ast e1)]
+           [(_ _) 
+            (error "type-check: '+ expects e1, e2 to be Integer" ast e1 e2)])]
+        
         [`(if ,cmp ,t ,f) 
-         (let ([type-cmp (recur cmp)]
-               [type-t (recur t)]
-               [type-f (recur f)])
-           (cond [(and (type-boolean? type-cmp) (same-type? type-t type-f)) type-t]
-                 [(not (same-type? type-t type-f)) 
-                  (error (format "type-check: (thn:~a) and (els:~a) from ~a have different type ~a and ~a" 
-                                  t f ast type-t type-f))]
-                 [(not (type-boolean? type-cmp)) 
-                  (error (format "type-check: condition expression ~a from ~a expects a boolean type, but get type ~a" 
+         (let-values ([(e-cmp type-cmp) (recur cmp)]
+                      [(e-t type-t) (recur t)]
+                      [(e-f type-f) (recur f)])
+           (match type-cmp
+             ['Boolean (match (equal? type-t type-f)
+                         [#t (values `(has-type (if ,e-cmp ,e-t ,e-f) ,type-t) type-t)]
+                         [else
+                          (error (format "type-check: (thn:~a) and (els:~a) from ~a have different type ~a and ~a" 
+                                  t f ast type-t type-f))])]
+             [else
+              (error (format "type-check: condition expression ~a from ~a expects a boolean type, but get type ~a" 
                                   cmp ast type-cmp))]))]))))
 
 
@@ -132,6 +167,7 @@
         [(? symbol?) (cdr (assq e env))]
         [(? integer?) e]
         [(? boolean?) e]
+        ['(void) '(void)]
         [`(if ,cnd ,thn ,els)
          `(if ,(recur cnd)
               ,(recur thn)
@@ -209,6 +245,14 @@
              (values new-temp
                      (append vec-stms `((assign ,new-temp (vector-ref ,new-e ,int))))
                      (cons new-temp vec-vars))))]
+        [`(vector-set! ,vec ,int ,val)
+         (let-values ([(vec-e vec-stms vec-vars) ((flatten #t) vec)]
+                      [(val-e val-stms val-vars) ((flatten #t) val)])
+           (let ([new-temp (gensym 'void.)])
+             (values new-temp
+                     (append vec-stms val-stms `((assign ,new-temp (vector-set! ,vec-e ,int ,val-e))))
+                     (cons new-temp (append vec-vars val-vars)))))]
+        
 
         [`(program ,e) 
          (let-values ([(e-exp e-stms e-vars) ((flatten #t) e)])
@@ -233,10 +277,20 @@
              [(#t) (let ([temp (gensym 'temp.)])
                      (values temp 
                              (append es-stms `((assign ,temp ,prim-exp)))
-                             (cons temp es-vars)))]))]
-        
-        
+                             (cons temp es-vars)))]))]        
         [else (error "flatten could not match " e)]))))
+
+#|
+(define expose-allocation
+  (lambda (ast)
+    (match ast
+      [`(assign ,lhs (vector ,e ...))
+       (let* ([len (length e)]
+              [bytes (* 8 (+ 1 len))]
+              
+         `(if (collection-needed?
+
+|#
 
 (define bin-op->instr
   (lambda (op)
@@ -736,36 +790,32 @@
         (newline)))
     
     (let* (
-           [checked ((type-check (void) 0) e)]
-           [uniq ((uniquify '()) checked)]
-           [flat ((flatten #t) uniq)]
-           [instrs (select-instructions flat)]
-           [liveness ((uncover-live (void)) instrs)]
-           [graph ((build-interference (void) (void) (void)) liveness)]
-           [allocs (allocate-registers graph)]
-           [lower-if (lower-conditionals allocs)]
-           [patched (patch-instructions lower-if)]
-           [x86 (print-x86 patched)]
+           [checked ((type-check '()) e)]
+           ; [uniq ((uniquify '()) checked)]
+           ; [flat ((flatten #t) uniq)]
+           ; [instrs (select-instructions flat)]
+           ; [liveness ((uncover-live (void)) instrs)]
+           ; [graph ((build-interference (void) (void) (void)) liveness)]
+           ; [allocs (allocate-registers graph)]
+           ; [lower-if (lower-conditionals allocs)]
+           ; [patched (patch-instructions lower-if)]
+           ; [x86 (print-x86 patched)]
            )
     (log checked)
-    (log uniq)
-    (log flat)
-    (log instrs)
-    (log liveness)
-    (log graph)
-    (log allocs)
-    (log lower-if)
-    (log patched)
-    (log x86)
+    ; (log uniq)
+    ; (log flat)
+    ; (log instrs)
+    ; (log liveness)
+    ; (log graph)
+    ; (log allocs)
+    ; (log lower-if)
+    ; (log patched)
+    ; (log x86)
     )))
 
 
-(define t
-  (lambda (r)
-    ; (define tc (type-check '()))
-    ((flatten #t) ((uniquify '()) r))))
 
-(t '(program
-     (vector-ref (vector-ref (vector (vector 42)) 0) 0)))
-
+(run '(program
+       (vector-set! (vector-ref (vector (vector (vector 42))) 0) 0 (vector 7))))
+;       (vector-ref (vector (vector 42)) 0)))
 

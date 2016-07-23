@@ -5,17 +5,30 @@
 (require "utilities/runtime-config.rkt")
 
 
+;; This list serves the same function as the range definitions that were used
+;; prior to giving run-tests a command line interfaces.
+(define suite-list
+  `((0 . ,(range 1 28))
+    (1 . ,(range 1 37))
+    (2 . ,(range 1 21))
+    (3 . ,(range 1 20))
+    (4 . ,(range 0 8))
+    (6 . ,(range 0 10))
+    (7 . ,(range 0 9))
+    ))
+
+
 (define passes
  (list
   `("uniquify"              ,(uniquify '())                                   ,interp-scheme)
-  `("flatten"               ,(flatten #f)                                     ,interp-C)
-  `("instruction selection" ,select-instructions                              ,interp-x86)
-  `("liveness analysis"     ,(uncover-live (void))                            ,interp-x86)
-  `("build interference"    ,(build-interference (void) (void) (void))        ,interp-x86)
-  `("allocate register"     ,allocate-registers                               ,interp-x86) 
-  `("lower-conditionals"    ,lower-conditionals                               ,interp-x86)
-  `("patch-instructions"    ,patch-instructions                                ,interp-x86)
-  `("x86"                   ,print-x86                                          #f)
+  `("flatten"               ,(flatten #t)                                     ,interp-C)
+  ; `("instruction selection" ,select-instructions                              ,interp-x86)
+  ; `("liveness analysis"     ,(uncover-live (void))                            ,interp-x86)
+  ; `("build interference"    ,(build-interference (void) (void) (void))        ,interp-x86)
+  ; `("allocate register"     ,allocate-registers                               ,interp-x86) 
+  ; `("lower-conditionals"    ,lower-conditionals                               ,interp-x86)
+  ; `("patch-instructions"    ,patch-instructions                                ,interp-x86)
+  ; `("x86"                   ,print-x86                                          #f)
  ))
 
 ;; I have made the original run-tests more programmatic so that we
@@ -29,22 +42,13 @@
 ;; running and testing them.
 (define compiler-list
   ;; Name           Typechecker               Compiler-Passes      Initial interpreter  Valid suites
-  `(("compiler"     ,(type-check (void) 0)    ,passes              ,interp-scheme       (0 1))
+ `(("compiler"     ,(type-check (void) 0)    ,passes              ,interp-scheme       (0 1))
+  ; `(("conditionals"  ,#f                       ,passes               ,interp-scheme       "s2"         ,(cdr (assq 0 suite-list)))
     ))
 
 (define compiler-table (make-immutable-hash compiler-list))
 
-;; This list serves the same function as the range definitions that were used
-;; prior to giving run-tests a command line interfaces.
-(define suite-list
-  `((0 . ,(range 1 28))
-    (1 . ,(range 1 37))
-    (2 . ,(range 1 21))
-    (3 . ,(range 1 20))
-    (4 . ,(range 0 8))
-    (6 . ,(range 0 10))
-    (7 . ,(range 0 9))
-    ))
+
 
 (define (suite-range x)
   (let ([r? (assoc x suite-list)])
@@ -157,7 +161,7 @@
  (unless (tests-to-run)
    (tests-to-run (range 0 100)))
 
- ;; This is the loop that calls test compile for each suite
+ ; This is the loop that calls test compile for each suite
  (for ([compiler (compilers-to-test)])
    (let ([info? (hash-ref compiler-table compiler #f)])
      (unless info?
@@ -168,7 +172,13 @@
            (let* ([sname (format "s~a" suite)]
                   [test-set (set-intersect (suite-range suite) (tests-to-run))]
                   [tests (sort test-set <)])
-             (test-compiler compiler tyck use-interp pass sname tests))))))))
+             (test-compiler compiler tyck use-interp pass sname tests)))))))
+ 
+
+ 
+ )
+
+
 
  
 
