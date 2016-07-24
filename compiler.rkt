@@ -164,6 +164,7 @@
     (lambda (e)
       (define recur (uniquify env))
       (match e
+        [`(has-type ,es ,t) `(has-type ,(recur es) ,t)]
         [(? symbol?) (cdr (assq e env))]
         [(? integer?) e]
         [(? boolean?) e]
@@ -180,7 +181,7 @@
         [`(vector-ref ,exp ,int) `(vector-ref ,(recur exp) ,int)]
         [`(vector-set! ,e1 ,int ,e2) `(vector-set! ,(recur e1) ,int ,(recur e2))]
         ; [`(program (type ,t) ,e) `(program (type ,t) ,(recur e))]
-        [`(program ,e) `(program ,(recur e))]
+        [`(program (type ,t) ,e) `(program (type ,t) ,(recur e))]
         [`(,op ,es ...) #:when (set-member? primitive-set op)
                         `(,op ,@(map (lambda (e) (recur e)) es))]
         [else (error "Uniquify could not match " e)]))))
@@ -231,6 +232,7 @@
         [(? symbol?) (values e '() '())]
         [(? integer?) (values e '() '())]
         [(? boolean?) (values e '() '())]
+        [`(has-type ,es ,t) ((flatten need-temp) es)]
         [`(vector ,(app (flatten #t) es* es-stms* es-vars*) ...)
          (let ([rtn `(vector ,@es*)]
                [stms (append* es-stms*)]
@@ -240,10 +242,11 @@
                    (append stms `((assign ,rtn-tmp ,rtn)))
                    (cons rtn-tmp vars)))]
         [`(vector-ref ,vec ,int)
-         (let-values ([(new-e vec-stms vec-vars) ((flatten #t) vec)])
+         (let-values ([(new-e vec-stms vec-vars) ((flatten #t) vec)]
+                      [(new-int int-stms int-vars) ((flatten #t) int)])
            (let ([new-temp (gensym 'temp.)])
              (values new-temp
-                     (append vec-stms `((assign ,new-temp (vector-ref ,new-e ,int))))
+                     (append vec-stms `((assign ,new-temp (vector-ref ,new-e ,new-int))))
                      (cons new-temp vec-vars))))]
         [`(vector-set! ,vec ,int ,val)
          (let-values ([(vec-e vec-stms vec-vars) ((flatten #t) vec)]
@@ -254,9 +257,9 @@
                      (cons new-temp (append vec-vars val-vars)))))]
         
 
-        [`(program ,e) 
+        [`(program (type ,t) ,e) 
          (let-values ([(e-exp e-stms e-vars) ((flatten #t) e)])
-           `(program ,e-vars ,@(append e-stms `((return ,e-exp)))))]
+           `(program (type ,t) ,e-vars ,@(append e-stms `((return ,e-exp)))))]
         [`(if ,cnd ,thn ,els)
          (let-values ([(new-thn thn-stms thn-vars) ((flatten #t) thn)]
                       [(new-els els-stms els-vars) ((flatten #t) els)])
@@ -288,9 +291,13 @@
        (let* ([len (length e)]
               [bytes (* 8 (+ 1 len))]
               
-         `(if (collection-needed?
-
+         `((if (collection-needed? ,bytes)
+               ((collect ,byte))
+               ())
+           (assign ,lhs 
+         
 |#
+
 
 (define bin-op->instr
   (lambda (op)
@@ -791,8 +798,8 @@
     
     (let* (
            [checked ((type-check '()) e)]
-           ; [uniq ((uniquify '()) checked)]
-           ; [flat ((flatten #t) uniq)]
+           [uniq ((uniquify '()) checked)]
+           [flat ((flatten #t) uniq)]
            ; [instrs (select-instructions flat)]
            ; [liveness ((uncover-live (void)) instrs)]
            ; [graph ((build-interference (void) (void) (void)) liveness)]
@@ -802,8 +809,8 @@
            ; [x86 (print-x86 patched)]
            )
     (log checked)
-    ; (log uniq)
-    ; (log flat)
+    (log uniq)
+    (log flat)
     ; (log instrs)
     ; (log liveness)
     ; (log graph)
@@ -816,6 +823,6 @@
 
 
 (run '(program
-       (vector-set! (vector-ref (vector (vector (vector 42))) 0) 0 (vector 7))))
+;       (vector-ref (vector-ref (vector (vector 42)) 0) 0)))
 ;       (vector-ref (vector (vector 42)) 0)))
-
+       (vector 1 2)))
