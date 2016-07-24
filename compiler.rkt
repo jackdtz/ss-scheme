@@ -184,7 +184,6 @@
         [`(vector ,exp ...) `(vector ,@(map recur exp))]
         [`(vector-ref ,exp ,int) `(vector-ref ,(recur exp) ,int)]
         [`(vector-set! ,e1 ,int ,e2) `(vector-set! ,(recur e1) ,int ,(recur e2))]
-        ; [`(program (type ,t) ,e) `(program (type ,t) ,(recur e))]
         [`(program (type ,t) ,e) `(program (type ,t) ,(recur e))]
         [`(,op ,es ...) #:when (set-member? primitive-set op)
                         `(,op ,@(map (lambda (e) (recur e)) es))]
@@ -255,9 +254,7 @@
 
       [else
        (error "in expose-allocation, unmatched" e)])))
-            
-              
-                         
+                                   
 
 (define flatten
   (lambda (need-temp)
@@ -318,10 +315,6 @@
                                   `((,temp . ,type)))]
                [else
                 (values e '() '())])]
-        
-
-        
-
         [`(program (type ,t) ,e) 
          (let-values ([(e-exp e-stms e-vars) ((flatten #t) e)])
            `(program (type ,t) ,e-vars ,@(append e-stms `((return ,e-exp)))))]
@@ -337,7 +330,6 @@
            (values new-body
                    (append e-stms `((assign ,x ,new-e)) body-stms)
                    (cons `(,x . ,e-type) (append e-vars body-vars))))]
-;        [`(has-type (,op ,(app (flatten #t) new-es* es-stms* es-vars*) ...) ,t)
         [`(has-type (,op ,es ...) ,t)
          #:when (or (set-member? primitive-set op) (set-member? vec-primitive-set op))
          (define-values (new-es* es-stms* es-vars*) (map3 (flatten #t) es))
@@ -353,22 +345,6 @@
         [`(has-type ,e ,t)
          ((flatten need-temp) e)]
         [else (error "flatten could not match " e)]))))
-
-#|
-(define expose-allocation
-  (lambda (ast)
-    (match ast
-      [`(assign ,lhs (vector ,e ...))
-       (let* ([len (length e)]
-              [bytes (* 8 (+ 1 len))]
-              
-         `((if (collection-needed? ,bytes)
-               ((collect ,byte))
-               ())
-           (assign ,lhs 
-         
-|#
-
 
 (define bin-op->instr
   (lambda (op)
