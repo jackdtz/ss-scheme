@@ -17,6 +17,10 @@
         'and 'or 'not)
    cmp-instructions))
 
+(define vec-primitive-set
+  (set 'vector 'vector-ref
+       'vector-set!))
+
 (define instruction-set
   (set 'addq 'negq 'movq 'subq 'movzbq 'cmpq 'xorq))
 
@@ -186,18 +190,86 @@
                         `(,op ,@(map (lambda (e) (recur e)) es))]
         [else (error "Uniquify could not match " e)]))))
 
+
+(define expose-allocation
+  (lambda (e)
+    (match e
+      [`(program (type ,ty) ,(app expose-allocation body))
+       `(program (type ,ty) ,body)]
+      [`(has-type (vector ,(app expose-allocation e*) ...) ,vec-type)
+       (define len (length e*))
+       (define size (* 8 (+ len 1)))
+       (define vec (gensym 'alloc.))
+       (define x* (map (lambda (e) (gensym 'vec-elt.)) e*))
+       (define init-vec (foldr
+                          (lambda (loc elt init)
+                            (define v (gensym 'initrec.))
+                            `(let ([,v (has-type (vector-set! ,vec ,loc ,elt) Void)])
+                               ,init))
+                          vec (range len) x*))
+       (define voidy (gensym 'collectret.))
+       (define alloc-init-vec
+         `(has-type
+            (let ([,voidy
+                   (has-type
+                    (if (has-type
+                         (< (has-type
+                             (+ (has-type (global-value free_ptr) Integer)
+                                (has-type ,size Integer))
+                             Integer)
+                            (has-type (global-value fromspace_end) Integer))
+                         Boolean)
+                        (has-type (void) Void)
+                        (has-type (collect ,size) Void))
+                    Void)])
+              (has-type
+               (let ([,vec (has-type (allocate ,len ,vec-type) ,vec-type)])
+                 ,init-vec)
+               ,vec-type))
+            ,vec-type))
+       (foldr
+        (lambda (x e init)
+          `(has-type (let ([,x ,e])
+                       ,init)
+                     ,vec-type))
+        alloc-init-vec x* e*)]
+      [`(has-type ,(app expose-allocation e) ,t)
+	    `(has-type ,e ,t)]
+	   [(? symbol?) e]
+	   [(? integer?) e]
+      [(? boolean?) e]
+      [`(void) e]
+      [`(if ,(app expose-allocation cnd) 
+            ,(app expose-allocation thn)
+            ,(app expose-allocation els))
+       `(if ,cnd ,thn ,els)]
+      [`(and ,(app expose-allocation e1)
+             ,(app expose-allocation e2))
+       `(and ,e1 ,e2)]
+      [`(,op ,es ...) #:when (set-member? vec-primitive-set op)
+                      (define new-es (map expose-allocation es))
+                      `(,op ,@new-es)]
+      [`(let ([,x ,(app expose-allocation rhs)]) 
+          ,(app expose-allocation body))
+       `(let ([,x ,rhs]) ,body)]
+
+      [else
+       (error "in expose-allocation, unmatched" e)])))
+            
+              
+                         
+
 (define flatten
   (lambda (need-temp)
     (lambda (e)
-      
-      (define (flatten-if thn-temp thn-stms els-temp els-stms vars)
+      (define (flatten-if if-type thn-temp thn-stms els-temp els-stms vars)
         (lambda (cnd)
           (match cnd
             [#t (values thn-temp thn-stms vars)]
             [#f (values els-temp els-stms vars)] 
-            [`(not ,e) ((flatten-if els-temp els-stms thn-temp thn-stms vars) e)]
+            [`(not ,e) ((flatten-if if-type els-temp els-stms thn-temp thn-stms vars) e)]
             [`(and ,e1 ,e2)
-             ((flatten-if thn-temp thn-stms els-temp els-stms vars)
+             ((flatten-if if-type thn-temp thn-stms els-temp els-stms vars)
               `(if (not ,e1) #f ,e2))]
             [`(,cmp ,e1 ,e2) #:when (set-member? cmp-instructions cmp) 
              (let-values ([(new-e1 e1-stms e1-vars) ((flatten #t) e1)]
@@ -209,16 +281,16 @@
                            (if (,cmp ,new-e1 ,new-e2)
                                (,@thn-stms (assign ,if-temp ,thn-temp))
                                (,@els-stms (assign ,if-temp ,els-temp))))
-                         `(,if-temp ,@(append e1-vars e2-vars vars)))))]
-            [`(let ([,x ,e]) ,body) 
+                         `((,if-temp . ,if-type) ,@(append e1-vars e2-vars vars)))))]
+            [`(let ([,x (has-type ,e ,e-type)]) ,body) 
              (let*-values ([(new-e e-stms e-vars) ((flatten #f) e)]
                            [(new-body body-stms body-vars)
-                            ((flatten-if thn-temp thn-stms els-temp els-stms vars) body)])
+                            ((flatten-if if-type thn-temp thn-stms els-temp els-stms vars) body)])
                   (values new-body
                           `(,@e-stms 
                             (assign ,x ,new-e) 
                             ,@body-stms)
-                          (cons x (append e-vars body-vars vars))))]
+                          (cons `(,x . ,e-type) (append e-vars body-vars vars))))]
             [else
              (let-values ([(new-cnd cnd-stms cnd-vars) ((flatten #t) cnd)])
                (let ([if-temp (gensym 'if.)])
@@ -227,51 +299,48 @@
                            (if (eq? #t ,new-cnd)
                                (,@thn-stms (assign ,if-temp ,thn-temp))
                                (,@els-stms (assign ,if-temp ,els-temp))))
-                         (cons if-temp (append cnd-vars vars)))))])))
+                         (cons `(,if-temp . ,if-type) (append cnd-vars vars)))))])))
       (match e
         [(? symbol?) (values e '() '())]
         [(? integer?) (values e '() '())]
         [(? boolean?) (values e '() '())]
-        [`(has-type ,es ,t) ((flatten need-temp) es)]
-        [`(vector ,(app (flatten #t) es* es-stms* es-vars*) ...)
-         (let ([rtn `(vector ,@es*)]
-               [stms (append* es-stms*)]
-               [vars (append* es-vars*)]
-               [rtn-tmp (gensym 'temp.)])
-           (values rtn-tmp
-                   (append stms `((assign ,rtn-tmp ,rtn)))
-                   (cons rtn-tmp vars)))]
-        [`(vector-ref ,vec ,int)
-         (let-values ([(new-e vec-stms vec-vars) ((flatten #t) vec)]
-                      [(new-int int-stms int-vars) ((flatten #t) int)])
-           (let ([new-temp (gensym 'temp.)])
-             (values new-temp
-                     (append vec-stms `((assign ,new-temp (vector-ref ,new-e ,new-int))))
-                     (cons new-temp vec-vars))))]
-        [`(vector-set! ,vec ,int ,val)
-         (let-values ([(vec-e vec-stms vec-vars) ((flatten #t) vec)]
-                      [(val-e val-stms val-vars) ((flatten #t) val)])
-           (let ([new-temp (gensym 'void.)])
-             (values new-temp
-                     (append vec-stms val-stms `((assign ,new-temp (vector-set! ,vec-e ,int ,val-e))))
-                     (cons new-temp (append vec-vars val-vars)))))]
+        [`(void) (values '(void) '() '())]
+        [`(collect ,size) (values '(void) `((collect ,size)) '())]
+        [`(global-value ,name)
+         (define temp (gensym 'global.))
+         (values temp
+                 `((assign ,temp (global-value ,name)))
+                 `((,temp . Integer)))]
+        [`(allocate ,len ,type)
+         (cond [need-temp (define temp (gensym 'vector.))
+                          (values temp
+                                  `((assign ,temp (allocate ,len ,type)))
+                                  `((,temp . ,type)))]
+               [else
+                (values e '() '())])]
+        
+
         
 
         [`(program (type ,t) ,e) 
          (let-values ([(e-exp e-stms e-vars) ((flatten #t) e)])
            `(program (type ,t) ,e-vars ,@(append e-stms `((return ,e-exp)))))]
-        [`(if ,cnd ,thn ,els)
+        
+        [`(has-type (if ,cnd ,thn ,els) ,if-type)
          (let-values ([(new-thn thn-stms thn-vars) ((flatten #t) thn)]
                       [(new-els els-stms els-vars) ((flatten #t) els)])
-           ((flatten-if new-thn thn-stms new-els els-stms (append thn-vars els-vars)) cnd))]                 
-        [`(let ([,x ,e]) ,body)
-         (let-values ([(new-e e-stms e-vars) ((flatten #f) e)]
+           ((flatten-if if-type new-thn thn-stms new-els els-stms (append thn-vars els-vars)) cnd))]
+        
+        [`(let ([,x (has-type ,e ,e-type)]) ,body)
+         (let-values ([(new-e e-stms e-vars) ((flatten #f) `(has-type ,e ,e-type))]
                       [(new-body body-stms body-vars) ((flatten need-temp) body)])
            (values new-body
                    (append e-stms `((assign ,x ,new-e)) body-stms)
-                   (cons x (append e-vars body-vars))))]
-        [`(,op ,(app (flatten #t) new-es* es-stms* es-vars*) ...)
-         #:when (set-member? primitive-set op)         
+                   (cons `(,x . ,e-type) (append e-vars body-vars))))]
+;        [`(has-type (,op ,(app (flatten #t) new-es* es-stms* es-vars*) ...) ,t)
+        [`(has-type (,op ,es ...) ,t)
+         #:when (or (set-member? primitive-set op) (set-member? vec-primitive-set op))
+         (define-values (new-es* es-stms* es-vars*) (map3 (flatten #t) es))
          (let ([prim-exp `(,op ,@new-es*)]
                [es-stms (append* es-stms*)]
                [es-vars (append* es-vars*)])               
@@ -280,7 +349,9 @@
              [(#t) (let ([temp (gensym 'temp.)])
                      (values temp 
                              (append es-stms `((assign ,temp ,prim-exp)))
-                             (cons temp es-vars)))]))]        
+                             (cons `(,temp . ,t) es-vars)))]))]
+        [`(has-type ,e ,t)
+         ((flatten need-temp) e)]
         [else (error "flatten could not match " e)]))))
 
 #|
@@ -799,7 +870,8 @@
     (let* (
            [checked ((type-check '()) e)]
            [uniq ((uniquify '()) checked)]
-           [flat ((flatten #t) uniq)]
+           [expo (expose-allocation uniq)]
+           [flat ((flatten #t) expo)]
            ; [instrs (select-instructions flat)]
            ; [liveness ((uncover-live (void)) instrs)]
            ; [graph ((build-interference (void) (void) (void)) liveness)]
@@ -808,9 +880,10 @@
            ; [patched (patch-instructions lower-if)]
            ; [x86 (print-x86 patched)]
            )
-    (log checked)
-    (log uniq)
-    (log flat)
+      (log checked)
+      (log uniq)
+      (log expo)
+      (log flat)
     ; (log instrs)
     ; (log liveness)
     ; (log graph)
