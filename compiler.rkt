@@ -381,19 +381,30 @@
 
 (define select-instructions
   (lambda (e)
+    (pretty-print e)
+    (newline)
     (match e
       [(? symbol?) `(var ,e)]
       [(? integer?) `(int ,e)]
       [#t `(int 1)]
       [#f `(int 0)]
+      [`(void) `(int 0)]
       [`(not ,e) `(xorq ,e 1)]
       [`(reg ,r) e]
       [`(return ,e) (select-instructions `(assign (reg rax) ,e))]
+      [`(collect ,size)
+       `((movq (reg rootstack-reg) (reg rdi))
+         (movq ,(select-instructions size) (reg rsi))
+         (callq collect))]
       [`(,cmp ,e1 ,e2)
        #:when (set-member? cmp-instructions cmp)
        `(,cmp ,(select-instructions e1) ,(select-instructions e2))]
       [`(assign ,lhs (read))
       `((callq read_int) (movq (reg rax) ,(select-instructions lhs)))]
+      [`(assign ,lhs (void))
+       `((movq (int 0) ,(select-instructions lhs)))]
+      [`(assign ,lhs (global-value ,name))
+       `((movq (global-value ,name) ,(select-instructions lhs)))]
       [`(assign ,lhs (,cmp-op ,e1 ,e2))
        #:when (set-member? cmp-instructions cmp-op)
        (let ([new-lhs (select-instructions lhs)]
@@ -439,7 +450,7 @@
             ,(append* (map select-instructions thn))
             ,(append* (map select-instructions els))))]
        
-      [`(program ,vars (type ,t) ,stms ...)
+      [`(program (type ,t) (,vars ...) ,stms ...)
        (let ([new-stms (map (lambda (s) (select-instructions s)) stms)])
          `(program ,vars (type ,t) ,@(append* new-stms)))]
       [else (error "R0/instruction selection, unmatch " e)])))
@@ -848,7 +859,7 @@
            [uniq ((uniquify '()) checked)]
            [expo (expose-allocation uniq)]
            [flat ((flatten #t) expo)]
-           ; [instrs (select-instructions flat)]
+           [instrs (select-instructions flat)]
            ; [liveness ((uncover-live (void)) instrs)]
            ; [graph ((build-interference (void) (void) (void)) liveness)]
            ; [allocs (allocate-registers graph)]
@@ -860,7 +871,7 @@
       (log uniq)
       (log expo)
       (log flat)
-    ; (log instrs)
+     (log instrs)
     ; (log liveness)
     ; (log graph)
     ; (log allocs)
