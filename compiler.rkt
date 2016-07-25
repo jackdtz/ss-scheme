@@ -393,7 +393,7 @@
       ; vector
       [`(void) `(int 0)]
       [`(collect ,size)
-       `((movq (reg rootstack-reg) (reg rdi))
+       `((movq (reg ,rootstack-reg) (reg rdi))
          (movq ,(select-instructions size) (reg rsi))
          (callq collect))]
       [`(assign ,lhs (allocate ,len (Vector ,ts ...)))
