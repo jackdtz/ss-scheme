@@ -381,21 +381,50 @@
 
 (define select-instructions
   (lambda (e)
-    (pretty-print e)
-    (newline)
     (match e
       [(? symbol?) `(var ,e)]
       [(? integer?) `(int ,e)]
       [#t `(int 1)]
       [#f `(int 0)]
-      [`(void) `(int 0)]
       [`(not ,e) `(xorq ,e 1)]
       [`(reg ,r) e]
       [`(return ,e) (select-instructions `(assign (reg rax) ,e))]
+
+      ; vector
+      [`(void) `(int 0)]
       [`(collect ,size)
        `((movq (reg rootstack-reg) (reg rdi))
          (movq ,(select-instructions size) (reg rsi))
          (callq collect))]
+      [`(assign ,lhs (allocate ,len (Vector ,ts ...)))
+       (define new-lhs (select-instructions lhs))
+       (define not-forwading-bit 0)
+       (define length-bits (arithmetic-shift len 1))
+       (define ptr-mask-bits
+         (arithmetic-shift 
+           (let loop ([lst (reverse ts)]
+                      [bits 0])
+             (cond [(null? lst) bits]
+                   [else
+                    (let ([is-vector-bit (match (car lst)
+                                          [`(Vector ,tys ...) 1]
+                                          [else 0])])
+                      (loop (cdr lst)
+                            (bitwise-ior (arithmetic-shift bits 1) is-vector-bit)))]))
+           7))
+       (define tag (bitwise-ior ptr-mask-bits length-bits not-forwading-bit))
+       `((movq (global-value free_ptr) ,new-lhs)
+         (addq (int ,(* 8 (+ len 1))) (global-value free_ptr))
+         (movq ,new-lhs (reg r11))
+         (movq (int ,tag) (deref r11 0)))]
+      [`(assign ,lhs (vector-ref ,vec ,i))
+       `((movq ,(select-instructions vec) (reg r11))
+         (movq (deref r11 ,(* 8 (+ 1 i))) ,(select-instructions lhs)))]
+      [`(assign ,lhs (vector-set! ,vec ,i ,elt))
+       `((movq ,(select-instructions vec) (reg r11))
+         (movq ,(select-instructions elt) (deref r11 ,(* 8 (+ 1 i))))
+         (movq (int 0) ,(select-instructions lhs)))]
+      
       [`(,cmp ,e1 ,e2)
        #:when (set-member? cmp-instructions cmp)
        `(,cmp ,(select-instructions e1) ,(select-instructions e2))]
@@ -449,7 +478,9 @@
        `((if ,(select-instructions cnd)
             ,(append* (map select-instructions thn))
             ,(append* (map select-instructions els))))]
-       
+      
+
+
       [`(program (type ,t) (,vars ...) ,stms ...)
        (let ([new-stms (map (lambda (s) (select-instructions s)) stms)])
          `(program ,vars (type ,t) ,@(append* new-stms)))]
@@ -470,8 +501,10 @@
       [`(var ,x) (set x)]
       [`(reg ,r) (set r)]
       [`(int ,i) (set)]
+      [`(global-value ,name) (set)]
+      [`(deref r11 ,s) (set)]
       [`(byte-reg ,r) (set (byte-reg->full-reg r))]
-      [else (error "unhandled case " e)])))
+      [else (error "free-var: unhandled case " e)])))
 
 (define write-vars
   (lambda (ast)
@@ -712,6 +745,8 @@
     (lambda (e)
       (define recur (assign-homes reg-map))
       (match e
+        [`(global-value ,name) e]
+        [`(deref r11 ,s) e]
         [`(var ,x) (look-up reg-map x)]
         [`(int ,i) `(int ,i)]
         [`(reg ,r) `(reg ,r)]
@@ -773,6 +808,7 @@
   (define in-memory?
    (lambda (x)
     (match x
+     [`(global-value ,name) #t]
      [`(deref rbp ,n) #t]
      [else #f])))
 
@@ -800,6 +836,8 @@
 (define print-x86
   (lambda (e)
     (match e
+      [`(global-value ,label)
+       (format "~a(%rip)" (label-name (symbol->string label)))]
       [`(deref ,reg ,r) (format "~a(%~a)" r reg)]
       [`(int ,n) (format "$~a" n)]
       [(or `(reg ,r) `(byte-reg ,r)) (format "%~a" r)]
@@ -860,24 +898,24 @@
            [expo (expose-allocation uniq)]
            [flat ((flatten #t) expo)]
            [instrs (select-instructions flat)]
-           ; [liveness ((uncover-live (void)) instrs)]
-           ; [graph ((build-interference (void) (void) (void)) liveness)]
-           ; [allocs (allocate-registers graph)]
-           ; [lower-if (lower-conditionals allocs)]
-           ; [patched (patch-instructions lower-if)]
-           ; [x86 (print-x86 patched)]
+           [liveness ((uncover-live (void)) instrs)]
+           [graph ((build-interference (void) (void) (void)) liveness)]
+           [allocs (allocate-registers graph)]
+           [lower-if (lower-conditionals allocs)]
+           [patched (patch-instructions lower-if)]
+           [x86 (print-x86 patched)]
            )
       (log checked)
       (log uniq)
       (log expo)
       (log flat)
-     (log instrs)
-    ; (log liveness)
-    ; (log graph)
-    ; (log allocs)
-    ; (log lower-if)
-    ; (log patched)
-    ; (log x86)
+      (log instrs)
+      (log liveness)
+      (log graph)
+      (log allocs)
+      (log lower-if)
+      (log patched)
+      (log x86)
     )))
 
 
