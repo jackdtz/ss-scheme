@@ -3,6 +3,8 @@
 (require data/heap)
 (require "utilities/utilities.rkt")
 (require "utilities/interp.rkt")
+(require "utilities/runtime-config.rkt")
+
 (provide (all-defined-out))
 
 (define cmp-instructions
@@ -581,8 +583,9 @@
       (match ast
         
        [`(program (,vars ,lives) (type ,t) ,instrs ...)
-        (let ([graph (make-graph vars)]
-              [mgraph (make-graph vars)])
+        (let* ([vars* (map (lambda (var) (car var)) vars)]
+               [graph (make-graph vars*)]
+               [mgraph (make-graph vars*)])
           (let ([new-instrs
                  (for/list ([inst instrs] [live-after lives])
                            ((build-interference live-after graph mgraph) inst))])
@@ -774,10 +777,19 @@
   (lambda (ast)
     (match ast
       [`(program (,vars ,graph ,mgraph) (type ,t) ,instrs ...)
+
        (let* ([annot-graph (annotate graph)]
-              [color-map ((color-graph annot-graph mgraph) vars)])
+              [color-map ((color-graph annot-graph mgraph) 
+                          (map (lambda (var) (car var)) vars))])
         (let-values ([(reg-map stk-size) (reg-spill color-map)])
-          `(program ,stk-size (type ,t) ,@(map (assign-homes reg-map) instrs))))]
+          (define root-size (* 8 
+                               (length 
+                                 (filter (lambda (var-type)
+                                                   (match (cdr var-type)
+                                                     [`(Vector ,ts ...) #t]
+                                                     [else #f]))
+                                         vars))))
+          `(program (,stk-size ,root-size) (type ,t) ,@(map (assign-homes reg-map) instrs))))]
       [else (error "allocate-registers could not match " ast)])))
                              
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -786,8 +798,8 @@
 (define lower-conditionals
   (lambda (ast)
     (match ast
-      [`(program ,stk-size (type ,t) ,instrs ...)
-       `(program ,stk-size (type ,t) ,@(append* (map lower-conditionals instrs)))]
+      [`(program (,stk-size ,root-size) (type ,t) ,instrs ...)
+       `(program (,stk-size ,root-size) (type ,t) ,@(append* (map lower-conditionals instrs)))]
       [`(if (,cmp-op ,e1 ,e2) ,thns ,elss)
        (let ([thenlabel (gensym 'then.)]
              [elselabel (gensym 'else.)]
@@ -813,8 +825,8 @@
      [else #f])))
 
   (match e
-    [`(program ,frame-size (type ,t) ,instr ...)
-    `(program ,frame-size (type ,t) ,@(append* (map patch-instructions instr)))]
+    [`(program (,stk-size ,root-size) (type ,t) ,instr ...)
+    `(program (,stk-size ,root-size) (type ,t) ,@(append* (map patch-instructions instr)))]
     [`(cmpq (int ,e1) (int ,e2)) 
      `((movq (int ,e2) (reg rax))
        (cmpq (int ,e1) (reg rax)))]
@@ -856,7 +868,24 @@
        #:when (set-member? instruction-set instr)
        (format "\t~a\t~a\n" instr (print-x86 dst))]
       
-      [`(program ,stack-space (type ,t) ,instrs ...)
+      [`(program (,stk-size ,root-size) (type ,t) ,instrs ...)
+       
+       (define initialize-heaps
+         (string-append
+           (format "\tmovq $~a, %rdi\n" root-size)
+           (format "\tmovq $~a, %rsi\n" (heap-size))
+           (format "\tcallq ~a\n" (label-name "initialize"))
+           (format "\tmovq ~a, %~a\n"
+                   (print-x86 '(global-value rootstack_begin))
+                   rootstack-reg)))
+       
+       (define initialize-root
+         (string-append*
+           (for/list ([i (range (/ root-size 8))])
+             (string-append
+               (format "\tmovq $0, (~a)\n" rootstack-reg)
+               (format "\taddq $~a, ~a\n" 8 rootstack-reg)))))
+       
        (string-append
          (format "\t.globl ~a\n" (label-name "main"))
          (format "~a:\n" (label-name "main"))
@@ -866,14 +895,15 @@
                           (lambda (reg)
                             (format "\tpushq\t%~a\n" reg))
                           (set->list callee-save)))
-         (format "\tsubq\t$~a, %rsp\n" stack-space)
+         (format "\tsubq\t$~a, %rsp\n" stk-size)
+         initialize-heaps
          "\n"
          (string-append* (map print-x86 instrs))
          "\n"
          (format "\tmovq\t%rax, %rdi\n")
          (format "\tcallq\t~a\n" (label-name "print_int"))
          (format "\tmovq\t$0, %rax\n")
-         (format "\taddq\t$~a, %rsp\n" stack-space)
+         (format "\taddq\t$~a, %rsp\n" stk-size)
          (string-append* (map
                           (lambda (reg)
                             (format "\tpopq\t%~a\n" reg))
@@ -905,11 +935,11 @@
            [patched (patch-instructions lower-if)]
            [x86 (print-x86 patched)]
            )
-      (log checked)
-      (log uniq)
-      (log expo)
-      (log flat)
-      (log instrs)
+      ; (log checked)
+      ; (log uniq)
+      ; (log expo)
+      ; (log flat)
+      ; (log instrs)
       (log liveness)
       (log graph)
       (log allocs)
@@ -922,5 +952,5 @@
 
 (run '(program
 ;       (vector-ref (vector-ref (vector (vector 42)) 0) 0)))
-;       (vector-ref (vector (vector 42)) 0)))
-       (vector 1 2)))
+      (vector-ref (vector 42 43) 0)))
+       ; (vector 1 2)))
