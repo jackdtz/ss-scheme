@@ -97,27 +97,30 @@
                ,(app recur e2* e2-ty))
          (match* (e1-ty e2-ty)
            [(`(Vector ,ts1 ...) `(Vector ,ts2 ...))
-            (values `(has-type (eq? e1* e2*) Boolean) 'Boolean)]
+            (values `(has-type (eq? ,e1* ,e2*) Boolean) 'Boolean)]
            [(_ _)
             (unless (equal? e1-ty e2-ty)
-              (error "type-check: eq? expect two operands have the same type" ast e1* e2*))])]
-        [`(,cmp-op ,(app recur e1* e1-ty)
-                   ,(app recur e2* e2-ty))
+              (error "type-check: eq? expect two operands have the same type" ast e1* e2*))
+            (values `(has-type (eq? ,e1* ,e2*) Boolean) 'Boolean)])]
+        [`(,cmp-op ,e1 ,e2)
          #:when (set-member? cmp-instructions cmp-op)
+         (define-values (e1* e1-ty) (recur e1))
+         (define-values (e2* e2-ty) (recur e2)) 
          (match* (e1-ty e2-ty)
            [('Integer 'Integer)
-            (values `(has-type (,cmp-op e1* e2*) Boolean) 'Boolean)]
+            (values `(has-type (,cmp-op ,e1* ,e2*) Boolean) 'Boolean)]
             [(_ _) 
              (error
               (format "type-check: ~a expects two operands: ~a(type:~a) and ~a(type:~a) to have the same type Integer (ast: ~a"
                       cmp-op e1* e1-ty e2* e2-ty ast))])]
         
-        [`(,logic-op ,(app recur e1* e1-ty)
-                     ,(app recur e2* e2-ty))
+        [`(,logic-op ,e1 ,e2)
          #:when (set-member? logic-instructions logic-op)
+         (define-values (e1* e1-ty) (recur e1))
+         (define-values (e2* e2-ty) (recur e2)) 
          (match* (e1-ty e2-ty)
            [('Boolean 'Boolean)
-            (values `(has-type (,logic-op e1* e2*) Boolean) 'Boolean)]
+            (values `(has-type (,logic-op ,e1* ,e2*) Boolean) 'Boolean)]
             [(_ _) 
              (error
               (format "type-check: ~a expects two operands: ~a(type:~a) and ~a(type:~a) to have the same type 'Boolean (ast: ~a"
@@ -126,7 +129,7 @@
         [`(let ([,var ,(app recur var-e var-type)]) ,body)
          (let ([new-env (add-env env var var-type)])
            (let-values ([(body-e body-ty) ((type-check new-env) body)])
-             (values `(has-type (let ([,var ,var-e]) ,body-e))
+             (values `(has-type (let ([,var ,var-e]) ,body-e) ,body-ty)
                      body-ty)))]
         
         [`(not ,(app recur e type))
@@ -183,11 +186,9 @@
          (let ([new-x (gensym x)])
            `(let ([,new-x ,new-e])
               ,((uniquify (cons `(,x . ,new-x) env)) body)))]
-        [`(vector ,exp ...) `(vector ,@(map recur exp))]
-        [`(vector-ref ,exp ,int) `(vector-ref ,(recur exp) ,int)]
-        [`(vector-set! ,e1 ,int ,e2) `(vector-set! ,(recur e1) ,int ,(recur e2))]
         [`(program (type ,t) ,e) `(program (type ,t) ,(recur e))]
-        [`(,op ,es ...) #:when (set-member? primitive-set op)
+        [`(,op ,es ...) #:when (or (set-member? primitive-set op)
+                                   (set-member? vec-primitive-set op))
                         `(,op ,@(map (lambda (e) (recur e)) es))]
         [else (error "Uniquify could not match " e)]))))
 
@@ -247,7 +248,8 @@
       [`(and ,(app expose-allocation e1)
              ,(app expose-allocation e2))
        `(and ,e1 ,e2)]
-      [`(,op ,es ...) #:when (set-member? vec-primitive-set op)
+      [`(,op ,es ...) #:when (or (set-member? vec-primitive-set op)
+                                 (set-member? primitive-set op))
                       (define new-es (map expose-allocation es))
                       `(,op ,@new-es)]
       [`(let ([,x ,(app expose-allocation rhs)]) 
@@ -480,9 +482,6 @@
        `((if ,(select-instructions cnd)
             ,(append* (map select-instructions thn))
             ,(append* (map select-instructions els))))]
-      
-
-
       [`(program (type ,t) (,vars ...) ,stms ...)
        (let ([new-stms (map (lambda (s) (select-instructions s)) stms)])
          `(program ,vars (type ,t) ,@(append* new-stms)))]
@@ -599,8 +598,7 @@
                      (add-edge graph d v)))
            (cond [(and (var? src) (var? dst)) (add-edge mgraph (get-var src)
                                                                (get-var dst))])
-           ast)]
-        
+           ast)]  
         [`(callq ,label) 
          (begin 
            (for ([v live-after])
@@ -925,33 +923,57 @@
     (let* (
            [checked ((type-check '()) e)]
            [uniq ((uniquify '()) checked)]
-           [expo (expose-allocation uniq)]
-           [flat ((flatten #t) expo)]
-           [instrs (select-instructions flat)]
-           [liveness ((uncover-live (void)) instrs)]
-           [graph ((build-interference (void) (void) (void)) liveness)]
-           [allocs (allocate-registers graph)]
-           [lower-if (lower-conditionals allocs)]
-           [patched (patch-instructions lower-if)]
-           [x86 (print-x86 patched)]
+           ; [expo (expose-allocation uniq)]
+           ; [flat ((flatten #t) expo)]
+           ; [instrs (select-instructions flat)]
+           ; [liveness ((uncover-live (void)) instrs)]
+           ; [graph ((build-interference (void) (void) (void)) liveness)]
+           ; [allocs (allocate-registers graph)]
+           ; [lower-if (lower-conditionals allocs)]
+           ; [patched (patch-instructions lower-if)]
+           ; [x86 (print-x86 patched)]
            )
-      ; (log checked)
-      ; (log uniq)
+      (log checked)
+      (log uniq)
       ; (log expo)
       ; (log flat)
       ; (log instrs)
-      (log liveness)
-      (log graph)
-      (log allocs)
-      (log lower-if)
-      (log patched)
-      (log x86)
+      ; (log liveness)
+      ; (log graph)
+      ; (log allocs)
+      ; (log lower-if)
+      ; (log patched)
+      ; (log x86)
     )))
 
 
-
 ; (run '(program
-;        ()))
-;       (vector-ref (vector-ref (vector (vector 42)) 0) 0)))
-      ; (vector-ref (vector 42 43) 0)))
-       ; (vector 1 2)))
+; (if (and #t #t) 42 777)))
+       
+(define test-passes
+ (list
+  `("uniquify"              ,(uniquify '())                                   ,interp-scheme)
+  
+  ))
+
+(define suite-list
+  `((0 . ,(range 1 28))
+    (1 . ,(range 1 37))
+    (2 . ,(range 1 21))
+    (3 . ,(range 1 20))
+    (4 . ,(range 0 8))
+    (6 . ,(range 0 10))
+    (7 . ,(range 0 9))
+    ))
+
+(define compiler-list
+  ;; Name           Typechecker               Compiler-Passes      Initial interpreter   Test-name    Valid suites
+  `(("conditionals"  ,(type-check (void))    ,test-passes          ,interp-scheme       "s2"         ,(cdr (assq 2 suite-list)))
+    
+    ))
+       
+(begin
+  (for ([test compiler-list])
+   (apply interp-tests test))
+  (pretty-display "all passed"))
+

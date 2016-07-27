@@ -21,7 +21,8 @@
 (define passes
  (list
   `("uniquify"              ,(uniquify '())                                   ,interp-scheme)
-  `("flatten"               ,(flatten #t)                                     ,interp-C)
+  `("expose allocation"     ,expose-allocation                                ,interp-scheme)
+  ; `("flatten"               ,(flatten #t)                                     ,interp-C)
   ; `("instruction selection" ,select-instructions                              ,interp-x86)
   ; `("liveness analysis"     ,(uncover-live (void))                            ,interp-x86)
   ; `("build interference"    ,(build-interference (void) (void) (void))        ,interp-x86)

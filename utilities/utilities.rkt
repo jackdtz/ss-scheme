@@ -15,6 +15,12 @@
 	 arg-registers rootstack-reg register->color registers align
          byte-reg->full-reg print-by-type strip-has-type)
 
+
+(define log
+  (lambda (e)
+    (pretty-display e)
+    (newline)))
+
 ;; debug state is a nonnegative integer.
 ;; The easiest way to increment it is passing the -d option
 ;; to run-tests.rkt
@@ -234,6 +240,7 @@
   (lambda (test-name)
     (debug "** compiler " name)
     (debug "** checking passes for test " test-name)
+    (log (format "** test-name ~a" test-name))
     (define input-file-name (format "tests/~a.in" test-name))
     (define result-file-name (format "tests/~a.res" test-name))
     (define program-name (format "tests/~a.rkt" test-name))
