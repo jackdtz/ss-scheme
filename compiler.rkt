@@ -950,7 +950,8 @@
 
 
 
-(run '(program
+; (run '(program
+;        ()))
 ;       (vector-ref (vector-ref (vector (vector 42)) 0) 0)))
-      (vector-ref (vector 42 43) 0)))
+      ; (vector-ref (vector 42 43) 0)))
        ; (vector 1 2)))
