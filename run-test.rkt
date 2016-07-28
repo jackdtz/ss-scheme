@@ -43,7 +43,7 @@
 ;; running and testing them.
 (define compiler-list
   ;; Name           Typechecker               Compiler-Passes      Initial interpreter  Valid suites
- `(("compiler"     ,(type-check (void))    ,passes              ,interp-scheme          (0 1 2))
+ `(("compiler"     ,(type-check (void))    ,passes              ,interp-scheme          (2))
   ; `(("conditionals"  ,#f                       ,passes               ,interp-scheme       "s2"         ,(cdr (assq 0 suite-list)))
     ))
 

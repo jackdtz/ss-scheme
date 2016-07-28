@@ -542,6 +542,8 @@
     
     (define/override (interp-scheme env)
       (lambda (ast)
+        (pretty-print ast)
+        (newline)
         (verbose "R2/interp-scheme" ast)
 	(match ast
           [`(void) (void)]
