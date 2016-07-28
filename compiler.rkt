@@ -24,7 +24,7 @@
        'vector-set!))
 
 (define instruction-set
-  (set 'addq 'negq 'movq 'subq 'movzbq 'cmpq 'xorq))
+  (set 'addq 'negq 'movq 'subq 'movzbq 'cmpq 'xorq 'andq))
 
 
 (define look-up
@@ -263,44 +263,52 @@
 (define flatten
   (lambda (need-temp)
     (lambda (e)
+      
       (define (flatten-if if-type thn-temp thn-stms els-temp els-stms vars)
         (lambda (cnd)
           (match cnd
-            [#t (values thn-temp thn-stms vars)]
-            [#f (values els-temp els-stms vars)] 
-            [`(not ,e) ((flatten-if if-type els-temp els-stms thn-temp thn-stms vars) e)]
-            [`(and ,e1 ,e2)
-             ((flatten-if if-type thn-temp thn-stms els-temp els-stms vars)
-              `(if (not ,e1) #f ,e2))]
-            [`(,cmp ,e1 ,e2) #:when (set-member? cmp-instructions cmp) 
-             (let-values ([(new-e1 e1-stms e1-vars) ((flatten #t) e1)]
-                          [(new-e2 e2-stms e2-vars) ((flatten #t) e2)])
-               (let ([if-temp (gensym 'if.)])
-                 (values if-temp
-                         `(,@e1-stms
-                           ,@e2-stms
-                           (if (,cmp ,new-e1 ,new-e2)
-                               (,@thn-stms (assign ,if-temp ,thn-temp))
-                               (,@els-stms (assign ,if-temp ,els-temp))))
-                         `((,if-temp . ,if-type) ,@(append e1-vars e2-vars vars)))))]
-            [`(let ([,x (has-type ,e ,e-type)]) ,body) 
-             (let*-values ([(new-e e-stms e-vars) ((flatten #f) e)]
-                           [(new-body body-stms body-vars)
-                            ((flatten-if if-type thn-temp thn-stms els-temp els-stms vars) body)])
+            [`(has-type ,cnd ,t)
+             (match cnd
+               [#t (values thn-temp thn-stms vars)]
+               [#f (values els-temp els-stms vars)]
+               [`(not ,e) ((flatten-if if-type els-temp els-stms thn-temp thn-stms vars) e)]
+               [`(and ,e1 ,e2)
+                ((flatten-if if-type thn-temp thn-stms els-temp els-stms vars)
+                 `(has-type (if (has-type (not ,e1) Boolean)
+                                (has-type #f Boolean)
+                                ,e2)
+                            Boolean))]
+               [`(,cmp ,e1 ,e2) #:when (set-member? cmp-instructions cmp) 
+                                (let-values ([(new-e1 e1-stms e1-vars) ((flatten #t) e1)]
+                                             [(new-e2 e2-stms e2-vars) ((flatten #t) e2)])
+                                  (let ([if-temp (gensym 'if.)])
+                                    (values if-temp
+                                            `(,@e1-stms
+                                              ,@e2-stms
+                                              (if (,cmp ,new-e1 ,new-e2)
+                                                  (,@thn-stms (assign ,if-temp ,thn-temp))
+                                                  (,@els-stms (assign ,if-temp ,els-temp))))
+                                            `((,if-temp . ,if-type) ,@(append e1-vars e2-vars vars)))))]
+               [`(let ([,x (has-type ,e ,e-type)]) ,body) 
+                (let*-values ([(new-e e-stms e-vars) ((flatten #f) e)]
+                              [(new-body body-stms body-vars)
+                               ((flatten-if if-type thn-temp thn-stms els-temp els-stms vars) body)])
                   (values new-body
                           `(,@e-stms 
-                            (assign ,x ,new-e) 
-                            ,@body-stms)
+                              (assign ,x ,new-e) 
+                              ,@body-stms)
                           (cons `(,x . ,e-type) (append e-vars body-vars vars))))]
-            [else
-             (let-values ([(new-cnd cnd-stms cnd-vars) ((flatten #t) cnd)])
-               (let ([if-temp (gensym 'if.)])
-                 (values if-temp
-                         `(,@cnd-stms
-                           (if (eq? #t ,new-cnd)
-                               (,@thn-stms (assign ,if-temp ,thn-temp))
-                               (,@els-stms (assign ,if-temp ,els-temp))))
-                         (cons `(,if-temp . ,if-type) (append cnd-vars vars)))))])))
+               [else
+                (let-values ([(new-cnd cnd-stms cnd-vars) ((flatten #t) `(has-type ,cnd ,t))])
+                  (let ([if-temp (gensym 'if.)])
+                      (values if-temp
+                              `(,@cnd-stms
+                                (if (eq? #t ,new-cnd)
+                                    (,@thn-stms (assign ,if-temp ,thn-temp))
+                                    (,@els-stms (assign ,if-temp ,els-temp))))
+                              (cons `(,if-temp . ,if-type) (append cnd-vars vars)))))])]
+            [else (error "flatten if could not match " cnd)])))
+      
       (match e
         [(? symbol?) (values e '() '())]
         [(? integer?) (values e '() '())]
@@ -321,7 +329,7 @@
                 (values e '() '())])]
         [`(program (type ,t) ,e) 
          (let-values ([(e-exp e-stms e-vars) ((flatten #t) e)])
-           `(program (type ,t) ,e-vars ,@(append e-stms `((return ,e-exp)))))]
+           `(program ,e-vars (type ,t) ,@(append e-stms `((return ,e-exp)))))]
         
         [`(has-type (if ,cnd ,thn ,els) ,if-type)
          (let-values ([(new-thn thn-stms thn-vars) ((flatten #t) thn)]
@@ -482,7 +490,7 @@
        `((if ,(select-instructions cnd)
             ,(append* (map select-instructions thn))
             ,(append* (map select-instructions els))))]
-      [`(program (type ,t) (,vars ...) ,stms ...)
+      [`(program (,vars ...) (type ,t) ,stms ...)
        (let ([new-stms (map (lambda (s) (select-instructions s)) stms)])
          `(program ,vars (type ,t) ,@(append* new-stms)))]
       [else (error "R0/instruction selection, unmatch " e)])))
@@ -528,6 +536,7 @@
       [`(negq ,x) (free-var x)]
       [`(set ,cc ,arg) (set)]
       [`(callq ,f) caller-save]
+      [`(andq ,e1 ,e2) (set-union (free-var e1) (free-var e2))]
       [else
        (error "read-vars could not match " ast)])))
 
@@ -920,60 +929,69 @@
         (pretty-display e)
         (newline)))
     
-    (let* (
+   (let* (
            [checked ((type-check '()) e)]
            [uniq ((uniquify '()) checked)]
-           ; [expo (expose-allocation uniq)]
-           ; [flat ((flatten #t) expo)]
-           ; [instrs (select-instructions flat)]
-           ; [liveness ((uncover-live (void)) instrs)]
-           ; [graph ((build-interference (void) (void) (void)) liveness)]
-           ; [allocs (allocate-registers graph)]
-           ; [lower-if (lower-conditionals allocs)]
-           ; [patched (patch-instructions lower-if)]
-           ; [x86 (print-x86 patched)]
+           [expo (expose-allocation uniq)]
+           [flat ((flatten #t) expo)]
+           [instrs (select-instructions flat)]
+           [liveness ((uncover-live (void)) instrs)]
+           [graph ((build-interference (void) (void) (void)) liveness)]
+           [allocs (allocate-registers graph)]
+           [lower-if (lower-conditionals allocs)]
+           [patched (patch-instructions lower-if)]
+           [x86 (print-x86 patched)]
            )
       (log checked)
       (log uniq)
-      ; (log expo)
-      ; (log flat)
-      ; (log instrs)
-      ; (log liveness)
-      ; (log graph)
-      ; (log allocs)
-      ; (log lower-if)
-      ; (log patched)
-      ; (log x86)
+      (log expo)
+      (log flat)
+      (log instrs)
+      (log liveness)
+      (log graph)
+      (log allocs)
+      (log lower-if)
+      (log patched)
+      (log x86)
     )))
 
 
-; (run '(program
-; (if (and #t #t) 42 777)))
+(run '(program (let ([v (vector 40 2)])
+  (+ (vector-ref v 0)
+     (vector-ref v 1)))))
        
-(define test-passes
- (list
-  `("uniquify"              ,(uniquify '())                                   ,interp-scheme)
-  
-  ))
+; (define test-passes
+;  (list
+;   `("uniquify"              ,(uniquify '())                                   ,interp-scheme)
+;   `("expose allocation"     ,expose-allocation                                ,interp-scheme)
+;   `("flatten"               ,(flatten #t)                                     ,interp-C)
+;   `("instruction selection" ,select-instructions                              ,interp-x86)
+;   ; `("liveness analysis"     ,(uncover-live (void))                            ,interp-x86)
+;   ; `("build interference"    ,(build-interference (void) (void) (void))        ,interp-x86)
+;   ; `("allocate register"     ,allocate-registers                               ,interp-x86) 
+;   ; ; `("lower-conditionals"    ,lower-conditionals                               ,interp-x86)
+;   ; `("patch-instructions"    ,patch-instructions                                ,interp-x86)
+;   ; `("x86"                   ,print-x86                                          #f)
+;   ))
 
-(define suite-list
-  `((0 . ,(range 1 28))
-    (1 . ,(range 1 37))
-    (2 . ,(range 1 21))
-    (3 . ,(range 1 20))
-    (4 . ,(range 0 8))
-    (6 . ,(range 0 10))
-    (7 . ,(range 0 9))
-    ))
+; (define suite-list
+;   `((0 . ,(range 1 28))
+;     (1 . ,(range 1 37))
+;     (2 . ,(range 1 21))
+;     (3 . ,(range 1 20))
+;     (4 . ,(range 0 8))
+;     (6 . ,(range 0 10))
+;     (7 . ,(range 0 9))
+;     ))
 
-(define compiler-list
-  ;; Name           Typechecker               Compiler-Passes      Initial interpreter   Test-name    Valid suites
-  `(("conditionals"  ,(type-check (void))    ,test-passes          ,interp-scheme       "s2"         ,(cdr (assq 2 suite-list)))
+; (define compiler-list
+;   ;; Name           Typechecker               Compiler-Passes      Initial interpreter   Test-name    Valid suites
+;   `(("conditionals"  ,(type-check (void))    ,test-passes          ,interp-scheme       "s0"         ,(cdr (assq 0 suite-list)))
     
-    ))
+;     ))
        
-(begin
-  (for ([test compiler-list])
-   (apply interp-tests test))
-  (pretty-display "all passed"))
+; (begin
+;   (for ([test compiler-list])
+;    (apply interp-tests test))
+;   (pretty-display "all passed"))
 
