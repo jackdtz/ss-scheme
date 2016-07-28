@@ -933,7 +933,7 @@
            [checked ((type-check '()) e)]
            [uniq ((uniquify '()) checked)]
            [expo (expose-allocation uniq)]
-           ; [flat ((flatten #t) expo)]
+           [flat ((flatten #t) expo)]
            ; [instrs (select-instructions flat)]
            ; [liveness ((uncover-live (void)) instrs)]
            ; [graph ((build-interference (void) (void) (void)) liveness)]
@@ -945,7 +945,7 @@
       (log checked)
       (log uniq)
       (log expo)
-      ; (log flat)
+      (log flat)
       ; (log instrs)
       ; (log liveness)
       ; (log graph)
@@ -961,39 +961,43 @@
           (+ (vector-ref v 0)
              (vector-ref v 1)))))
        
-; (define test-passes
-;  (list
-;   `("uniquify"              ,(uniquify '())                                   ,interp-scheme)
-;   `("expose allocation"     ,expose-allocation                                ,interp-scheme)
-;   ; `("flatten"               ,(flatten #t)                                     ,interp-C)
-;   ; `("instruction selection" ,select-instructions                              ,interp-x86)
-;   ; `("liveness analysis"     ,(uncover-live (void))                            ,interp-x86)
-;   ; `("build interference"    ,(build-interference (void) (void) (void))        ,interp-x86)
-;   ; `("allocate register"     ,allocate-registers                               ,interp-x86) 
-;   ; ; `("lower-conditionals"    ,lower-conditionals                               ,interp-x86)
-;   ; `("patch-instructions"    ,patch-instructions                                ,interp-x86)
-;   ; `("x86"                   ,print-x86                                          #f)
-;   ))
+(define test-passes
+ (list
+  `("uniquify"              ,(uniquify '())                                   ,interp-scheme)
+  `("expose allocation"     ,expose-allocation                                ,interp-scheme)
+  `("flatten"               ,(flatten #t)                                     ,interp-C)
+  ; `("instruction selection" ,select-instructions                              ,interp-x86)
+  ; `("liveness analysis"     ,(uncover-live (void))                            ,interp-x86)
+  ; `("build interference"    ,(build-interference (void) (void) (void))        ,interp-x86)
+  ; `("allocate register"     ,allocate-registers                               ,interp-x86) 
+  ; ; `("lower-conditionals"    ,lower-conditionals                               ,interp-x86)
+  ; `("patch-instructions"    ,patch-instructions                                ,interp-x86)
+  ; `("x86"                   ,print-x86                                          #f)
+  ))
 
-; (define suite-list
-;   `((0 . ,(range 1 28))
-;     (1 . ,(range 1 37))
-;     (2 . ,(range 1 21))
-;     (3 . ,(range 1 20))
-;     (4 . ,(range 0 8))
-;     (6 . ,(range 0 10))
-;     (7 . ,(range 0 9))
-;     ))
+(define suite-list
+  `((0 . ,(range 1 28))
+    (1 . ,(range 1 37))
+    (2 . ,(range 1 21))
+    (3 . ,(range 1 20))
+    (4 . ,(range 0 8))
+    (6 . ,(range 0 10))
+    (7 . ,(range 0 9))
+    ))
 
-; (define compiler-list
-;   ;; Name           Typechecker               Compiler-Passes      Initial interpreter   Test-name    Valid suites
-;   `(("conditionals"  ,(type-check (void))    ,test-passes          ,interp-scheme       "s2"         ,(cdr (assq 2 suite-list)))
+(define compiler-list
+  ;; Name           Typechecker               Compiler-Passes      Initial interpreter   Test-name    Valid suites
+  `(("conditionals"  ,(type-check (void))    ,test-passes          ,interp-scheme       "s2"         ,(cdr (assq 2 suite-list)))
     
-;     ))
+    ))
        
-; (begin
-;   (for ([test compiler-list])
-;    (apply interp-tests test))
-;   (pretty-display "all passed"))
+(begin
+ (for ([test compiler-list])
+  (apply interp-tests test))
+ (pretty-display "all passed"))
+
+
+
+
 
 

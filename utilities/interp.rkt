@@ -30,6 +30,9 @@
 
     (define/public (primitives)
       (set '+ '- 'read))
+    
+    (define/public (memory-instructions)
+      (set 'global-value 'collect 'allocate))
 
     (define/public (interp-op op)
       (match op
@@ -42,6 +45,8 @@
 
     (define/public (interp-scheme env)
       (lambda (ast)
+        ; (pretty-print "-------------------this is in R0-----------------")
+        ; (pretty-print ast)
         (verbose "R0/interp-scheme" ast)
   (match ast
            [(? symbol?)
@@ -76,6 +81,9 @@
   
     (define/public (interp-C env)
       (lambda (ast)
+        (pretty-print "---------this is in R0--------------")
+        (pretty-print ast)
+        (newline)
         (vomit "R0/interp-C" ast env)
         (match ast
           [(? symbol? x) (lookup x env)]
@@ -200,14 +208,12 @@
 
     (define/override (interp-scheme env)
       (lambda (ast)
+        ; (pretty-print "-------------------this is in R1-----------------")
+        ; (pretty-print ast)
+        ; (newline)
         (verbose "R1/interp-scheme" ast)
   (match ast
-          [`(has-type ,e ,t) 
-           (pretty-print "-----------------this is in R1-----------------")
-           (pretty-print ast)
-           (newline) 
-           ((interp-scheme env) e)]
-          
+          [`(has-type ,e ,t) ((interp-scheme env) e)]
           [#t #t]
           [#f #f]
           [`(and ,e1 ,e2)
@@ -225,6 +231,9 @@
 
     (define/override (interp-C env)
       (lambda (ast)
+        (pretty-print "---------this is in R1--------------")
+        (pretty-print ast)
+        (newline)
   (vomit "R1/interp-C" ast)
   (match ast
           [`(has-type ,e ,t) ((interp-C env) e)]
@@ -547,13 +556,13 @@
     
     (define/override (interp-scheme env)
       (lambda (ast)
-        (pretty-print "--------------------this is in R2--------------")
-        (pretty-print ast)
-        (newline)
+        ; (pretty-print "-------------------this is in R2-----------------")
+        ; (pretty-print ast)
         (verbose "R2/interp-scheme" ast)
   (match ast
           [`(void) (void)]
-    [`(global-value free_ptr) (unbox free_ptr)]
+    [`(global-value free_ptr)
+     (unbox free_ptr)]
     [`(global-value fromspace_end)
      (unbox fromspace_end)]
           [`(allocate ,l ,ty) (build-vector l (lambda a uninitialized))]
@@ -595,6 +604,9 @@
     
     (define/override (interp-C env)
       (lambda (ast)
+        (pretty-print "---------this is in R2--------------")
+        (pretty-print ast)
+        (newline)
         (vomit "R2/interp-C" ast)
         (match ast
           [`(void) (void)]
@@ -740,7 +752,7 @@
 (define interp-R3
   (class interp-R2
     (super-new)
-    (inherit primitives seq-C display-by-type interp-op initialize!)
+    (inherit primitives seq-C display-by-type interp-op initialize! memory-instructions)
     (inherit-field result rootstack_begin free_ptr fromspace_end
        uninitialized)
 
@@ -750,6 +762,8 @@
 
     (define/override (interp-scheme env)
       (lambda (ast)
+        ; (pretty-print "-------------------this is in R3-----------------")
+        ; (pretty-print ast)
         (verbose "R3/interp-scheme" ast)
         (match ast
           [`(define (,f [,xs : ,ps] ...) : ,rt ,body)
@@ -761,7 +775,8 @@
       runtime-config:heap-size)
      (let ([env (map  (interp-scheme '()) ds)])
        ((interp-scheme env) body))]
-          [`(,fun ,args ...) #:when (not (set-member? (non-apply-ast) fun))
+          [`(,fun ,args ...) #:when (and (not (set-member? (non-apply-ast) fun))
+                                         (not (set-member? (memory-instructions) fun)))
      (define new-args (map (interp-scheme env) args))
            (define fun-val ((interp-scheme env) fun))
      (match fun-val
@@ -838,6 +853,9 @@
 
     (define/override (interp-C env)
       (lambda (ast)
+        (pretty-print "---------this is in R3--------------")
+        (pretty-print ast)
+        (newline)
   (verbose "R3/interp-C" ast)
   (match ast
      [`(define (,f [,xs : ,ps] ...) : ,rt ,locals ,ss ...)
@@ -965,11 +983,13 @@
 (define interp-R4
   (class interp-R3
     (super-new)
-    (inherit non-apply-ast initialize!)
+    (inherit non-apply-ast initialize! memory-instructions)
     (inherit-field result)
     
     (define/override (interp-scheme env)
       (lambda (ast)
+        ; (pretty-print "-------------------this is in R4-----------------")
+        ; (pretty-print ast)
         (verbose "R4/interp-scheme" ast)
   (match ast
           [`(lambda: ([,xs : ,Ts] ...) : ,rT ,body)
@@ -990,7 +1010,8 @@
                               [`(lambda ,xs ,body)
                                `(lambda ,xs ,body ,top-level)])))
              ((interp-scheme top-level) body))]
-    [`(,fun ,args ...) #:when (not (set-member? (non-apply-ast) fun))
+    [`(,fun ,args ...) #:when (and (not (set-member? (non-apply-ast) fun))
+                                   (not (set-member? (memory-instructions) fun)))
      (define arg-vals (map (interp-scheme env) args))
      (define fun-val ((interp-scheme env) fun))
      (match fun-val
@@ -1088,6 +1109,8 @@
 
     (define/override (interp-scheme env)
       (lambda (ast)
+        ; (pretty-print "-------------------this is in R6-----------------")
+        ; (pretty-print ast)
         (verbose "R6/interp-scheme" ast)
   (define recur (interp-scheme env))
   (match ast
@@ -1121,6 +1144,9 @@
 
     (define/override (interp-C env)
       (lambda (ast)
+        (pretty-print "---------this is in R6--------------")
+        (pretty-print ast)
+        (newline)
   (verbose "R6/interp-C" ast)
   (match ast
           [`(inject ,e ,t)
@@ -1169,60 +1195,43 @@
     )) ;; interp-R6
 
 
-(interp-scheme 
-  '(program
- (type Integer)
- (has-type
-  (let ((v21445
-         (has-type
-          (let ((vecinit21447 (has-type 40 Integer)))
-            (has-type
-             (let ((vecinit21448 (has-type 2 Integer)))
-               (has-type
-                (let ((collectret21451
-                       (has-type
-                        (if (has-type
-                             (<
-                              (has-type
-                               (+
-                                (has-type (global-value free_ptr) Integer)
-                                (has-type 24 Integer))
-                               Integer)
-                              (has-type (global-value fromspace_end) Integer))
-                             Boolean)
-                          (has-type (void) Void)
-                          (has-type (collect 24) Void))
-                        Void)))
-                  (has-type
-                   (let ((alloc21446
-                          (has-type
-                           (allocate 2 (Vector Integer Integer))
-                           (Vector Integer Integer))))
-                     (let ((initret21450
-                            (has-type
-                             (vector-set! alloc21446 0 vecinit21447)
-                             Void)))
-                       (let ((initret21449
-                              (has-type
-                               (vector-set! alloc21446 1 vecinit21448)
-                               Void)))
-                         alloc21446)))
-                   (Vector Integer Integer)))
-                (Vector Integer Integer)))
-             (Vector Integer Integer)))
-          (Vector Integer Integer))))
-    (has-type
-     (+
-      (has-type
-       (vector-ref
-        (has-type v21445 (Vector Integer Integer))
-        (has-type 0 Integer))
-       Integer)
-      (has-type
-       (vector-ref
-        (has-type v21445 (Vector Integer Integer))
-        (has-type 1 Integer))
-       Integer))
-     Integer))
-  Integer)))
+; (interp-scheme
+    
+; )
 
+(interp-C
+  '(program
+ ((v11703 Vector Integer Integer)
+  (vec-elt.11705 . Integer)
+  (vec-elt.11706 . Integer)
+  (collectret.11709 . Void)
+  (if.11713 . Void)
+  (temp.11711 . Integer)
+  (global.11710 . Integer)
+  (global.11712 . Integer)
+  (alloc.11704 Vector Integer Integer)
+  (initrec.11708 . Void)
+  (initrec.11707 . Void)
+  (temp.11716 . Integer)
+  (temp.11714 . Integer)
+  (temp.11715 . Integer))
+ (type Integer)
+ (assign vec-elt.11705 40)
+ (assign vec-elt.11706 2)
+ (assign global.11710 (global-value free_ptr))
+ (assign temp.11711 (+ global.11710 24))
+ (assign global.11712 (global-value fromspace_end))
+ (if (< temp.11711 global.11712)
+   ((assign if.11713 (void)))
+   ((collect 24) (assign if.11713 (void))))
+ (assign collectret.11709 if.11713)
+ (assign alloc.11704 (allocate 2 (Vector Integer Integer)))
+ (assign initrec.11708 (vector-set! alloc.11704 0 vec-elt.11705))
+ (assign initrec.11707 (vector-set! alloc.11704 1 vec-elt.11706))
+ (assign v11703 alloc.11704)
+ (assign temp.11714 (vector-ref v11703 0))
+ (assign temp.11715 (vector-ref v11703 1))
+ (assign temp.11716 (+ temp.11714 temp.11715))
+ (return temp.11716))  
+  
+)
