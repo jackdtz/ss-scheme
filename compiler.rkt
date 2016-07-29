@@ -17,7 +17,8 @@
   (set-union
    (set '+ '- 'read       
         'and 'or 'not)
-   cmp-instructions))
+   cmp-instructions
+   logic-instructions))
 
 (define vec-primitive-set
   (set 'vector 'vector-ref
@@ -26,12 +27,24 @@
 (define instruction-set
   (set 'addq 'negq 'movq 'subq 'movzbq 'cmpq 'xorq 'andq))
 
+(define prettify-fun-type
+  (lambda (type)
+    (if (list? type)
+        type
+        `(,@(car type) -> ,(cdr type)))))
+  
 
 (define look-up
   (lambda (env key)
     (if (hash-has-key? env key)
         (hash-ref env key)
         (error "no value found for key" env key))))
+
+(define type-check-lookup
+  (lambda (env key)
+    (if (hash-has-key? env key)
+        (hash-ref env key)
+        '())))
 
 
 (define add-env
@@ -40,25 +53,45 @@
         (hash-set env key (cons val (hash-ref env key)))
         (hash-set env key (list val)))))
 
+(define add-f-env
+  (lambda (env fname type)
+    (if (hash-has-key? env fname)
+        (error "duplicated function in program: " fname)
+        (hash-set env fname type))))
+
 (define type-integer? (lambda (x) (equal? x 'Integer)))
 (define type-boolean? (lambda (x) (equal? x 'Boolean)))
 (define same-type? (lambda (x y) (equal? x y)))
 
 
 (define type-check
-  (lambda (env)
+  (lambda (env fenv)
     (lambda (ast)
-      (define recur (type-check env))
+      (define recur (type-check env fenv))
       (match ast
-        [`(program ,body) 
-         (let-values ([(body-e body-type) ((type-check (hash)) body)])
-           `(program (type ,body-type) ,body-e))]
+        [`(program ,(and fun-defs
+                   `(define (,fun-names (,vars : ,arg-types) ...) : ,ret-types ,fbody))  ... ,body) 
+         (define types (map (lambda (arg-type ret-type) (cons arg-type ret-type))
+                            arg-types ret-types))
+         (define fenv* (foldl (lambda (fname type init)
+                               (add-f-env init fname type))
+                             (hash) fun-names types))
+         (let-values ([(body-e body-type) ((type-check (hash) fenv*) body)])
+           `(program (type ,body-type) ,@fun-defs ,body-e))]
         ['(read) (values `(has-type (read) Integer) 'Integer)]
         [(? fixnum?) (values `(has-type ,ast Integer) 'Integer)]
         [(? boolean?) (values `(has-type ,ast Boolean) 'Boolean)]
         [(? symbol?)
-         (let ([ty (car (look-up env ast))])
-           (values `(has-type ,ast ,ty) ty))] 
+         (let ([val (type-check-lookup env ast)])
+           (cond [(not (null? val)) 
+                  (define ty (car val))
+                  (values `(has-type ,ast ,ty) ty)]
+                 [else
+                  (let ([f-type (type-check-lookup fenv ast)])
+                    (unless (not (null? f-type))
+                      (error (format "undefined variable ~a " ast)))
+                    (values `(hash-type ,ast ,f-type) f-type))]))]
+           
         
         ; Vector
         [`(void) (values `(has-type (void) Void) 'Void)]
@@ -93,6 +126,39 @@
            [else
             (display (format "vector: ~a" vec-ty))
             (error (format "expected a vector type in vector-set!, not ~a in ~a" vec-ty ast))])]
+        
+        ; function
+        [`(define (,fun-name [,vars : ,types] ...) : ,ret-type ,body)
+         
+         (define updated-env
+           (foldl (lambda (env var type)
+                    (add-env var type))
+                  env vars types))
+         
+         (define-values (body-e body-type) ((type-check updated-env fenv) body))
+         (unless (equal? ret-type body-type)
+           (error "body type and return type mismatch for function " fun-name))
+         (define args (map (lambda (var type) `(,var : type)) vars types))
+         `(define (,fun-name ,@args : ,ret-type ,body-e))]
+        [`(,fun-name ,pargs ...) 
+         #:when (not (set-member? primitive-set fun-name))
+         (define fun-type (type-check-lookup fenv fun-name))
+         
+         (unless (not (null? fun-type))
+           (error "funtion is not defined" fun-name))
+         
+         (define arg-types (car fun-type))
+         (define ret-type (cdr fun-type))
+         (define-values (parg-e parg-types) (map2 (lambda (parg) ((type-check env fenv) parg)) pargs))
+
+         (for/list ([arg-type arg-types]
+                    [ptype parg-types])
+           (define ptype* (prettify-fun-type ptype))
+           (unless (equal? arg-type ptype*)
+             (error (format "unmatch argument type in ~a, expect ~a but got ~a" fun-name arg-type ptype*))))
+         (values `(has-type (,fun-name ,@parg-e) ,ret-type) ret-type)]
+         
+        ; compare operations
         [`(eq? ,(app recur e1* e1-ty)
                ,(app recur e2* e2-ty))
          (match* (e1-ty e2-ty)
@@ -128,7 +194,7 @@
         
         [`(let ([,var ,(app recur var-e var-type)]) ,body)
          (let ([new-env (add-env env var var-type)])
-           (let-values ([(body-e body-ty) ((type-check new-env) body)])
+           (let-values ([(body-e body-ty) ((type-check new-env fenv) body)])
              (values `(has-type (let ([,var ,var-e]) ,body-e) ,body-ty)
                      body-ty)))]
         
@@ -931,38 +997,41 @@
         (newline)))
     
    (let* (
-           [checked ((type-check '()) e)]
-           [uniq ((uniquify '()) checked)]
-           [expo (expose-allocation uniq)]
-           [flat ((flatten #t) expo)]
-           [instrs (select-instructions flat)]
-           [liveness ((uncover-live (void)) instrs)]
-           [graph ((build-interference (void) (void) (void)) liveness)]
-           [allocs (allocate-registers graph)]
-           [lower-if (lower-conditionals allocs)]
-           [patched (patch-instructions lower-if)]
-           [x86 (print-x86 patched)]
+           [checked ((type-check '() '()) e)]
+           ; [uniq ((uniquify '()) checked)]
+           ; [expo (expose-allocation uniq)]
+           ; [flat ((flatten #t) expo)]
+           ; [instrs (select-instructions flat)]
+           ; [liveness ((uncover-live (void)) instrs)]
+           ; [graph ((build-interference (void) (void) (void)) liveness)]
+           ; [allocs (allocate-registers graph)]
+           ; [lower-if (lower-conditionals allocs)]
+           ; [patched (patch-instructions lower-if)]
+           ; [x86 (print-x86 patched)]
            )
       (log checked)
-      (log uniq)
-      (log expo)
-      (log flat)
-      (log instrs)
-      (log liveness)
-      (log graph)
-      (log allocs)
-      (log lower-if)
-      (log patched)
-      (log x86)
+      ; (log uniq)
+      ; (log expo)
+      ; (log flat)
+      ; (log instrs)
+      ; (log liveness)
+      ; (log graph)
+      ; (log allocs)
+      ; (log lower-if)
+      ; (log patched)
+      ; (log x86)
     )))
 
 
 (run 
-  '(program 
-        (let ([v (vector 0 0)])
-  (let ([_ (vector-set! v 0 1)])
-    (let ([_ (vector-set! v 1 2)])
-      (+ (vector-ref v 0) (vector-ref v 1))))))
+  '(program
+      (define (map-vec [f : (Integer -> Integer)]
+      [v : (Vector Integer Integer)])
+      : (Vector Integer Integer)
+      (vector (f (vector-ref v 0)) (f (vector-ref v 1))))
+      (define (add1 [x : Integer]) : Integer
+      (+ x 1))
+      (vector-ref (map-vec add1 (vector 0 41)) 1))
      
      )
        
