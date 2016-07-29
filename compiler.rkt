@@ -76,11 +76,16 @@
          (define fenv* (foldl (lambda (fname type init)
                                (add-f-env init fname type))
                              (hash) fun-names types))
-         (let-values ([(body-e body-type) ((type-check (hash) fenv*) body)])
-           `(program (type ,body-type) ,@fun-defs ,body-e))]
+         (define env* (hash))
+         (let-values ([(fun-defs-e fun-types) (map2 (lambda (def) ((type-check env* fenv*) def))
+                                                    fun-defs)]
+                      [(body-e body-type) ((type-check env* fenv*) body)])
+           `(program (type ,body-type) ,@fun-defs-e ,body-e))]
+        
         ['(read) (values `(has-type (read) Integer) 'Integer)]
         [(? fixnum?) (values `(has-type ,ast Integer) 'Integer)]
         [(? boolean?) (values `(has-type ,ast Boolean) 'Boolean)]
+
         [(? symbol?)
          (let ([val (type-check-lookup env ast)])
            (cond [(not (null? val)) 
@@ -130,22 +135,32 @@
         ; function
         [`(define (,fun-name [,vars : ,types] ...) : ,ret-type ,body)
          
-         (define updated-env
-           (foldl (lambda (env var type)
-                    (add-env var type))
-                  env vars types))
+         (define updated-env-fenv
+           (foldl (lambda (var type env-fenv)
+                    (define env (car env-fenv))
+                    (define fenv (cdr env-fenv))
+                    (match type
+                      [`(,args ... -> ,ret) (cons env (add-f-env fenv var `(,args . ,ret)))]
+                      [else (cons (add-env env var type) fenv)]))
+                  (cons env fenv) vars types))
+
+         (define env* (car updated-env-fenv))
+         (define fenv* (cdr updated-env-fenv))
          
-         (define-values (body-e body-type) ((type-check updated-env fenv) body))
+         (define-values (body-e body-type) ((type-check env* fenv*) body))
          (unless (equal? ret-type body-type)
            (error "body type and return type mismatch for function " fun-name))
          (define args (map (lambda (var type) `(,var : type)) vars types))
-         `(define (,fun-name ,@args : ,ret-type ,body-e))]
+         (values `(has-type (define (,fun-name ,@args : ,ret-type ,body-e))
+                            ,ret-type)
+                 ret-type)]
+        
         [`(,fun-name ,pargs ...) 
          #:when (not (set-member? primitive-set fun-name))
          (define fun-type (type-check-lookup fenv fun-name))
          
          (unless (not (null? fun-type))
-           (error "funtion is not defined" fun-name))
+           (error "funtion is not defined" fun-name ast))
          
          (define arg-types (car fun-type))
          (define ret-type (cdr fun-type))
@@ -153,9 +168,12 @@
 
          (for/list ([arg-type arg-types]
                     [ptype parg-types])
-           (define ptype* (prettify-fun-type ptype))
-           (unless (equal? arg-type ptype*)
-             (error (format "unmatch argument type in ~a, expect ~a but got ~a" fun-name arg-type ptype*))))
+           (define arg-type*
+             (match arg-type
+               [`(,args ... -> ,ret) `(,args . ,ret)]
+               [else arg-type]))
+           (unless (equal? arg-type* ptype)
+             (error (format "unmatch argument type in ~a, expect ~a but got ~a" fun-name arg-type ptype))))
          (values `(has-type (,fun-name ,@parg-e) ,ret-type) ret-type)]
          
         ; compare operations
