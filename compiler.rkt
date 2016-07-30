@@ -29,7 +29,7 @@
 
 (define prettify-fun-type
   (lambda (type)
-    (if (list? type)
+    (if (is-function? type)
         type
         `(,@(car type) -> ,(cdr type)))))
   
@@ -46,9 +46,10 @@
         (hash-ref env key)
         '())))
 
-(define in-env?
-  (lambda (fenv name)
-    (assoc name fenv)))
+(define is-function?
+  (lambda (x)
+    (not (list? x))))
+
 
 (define normalize-func-type-format
   (lambda (t)
@@ -133,13 +134,14 @@
          (define-values (var-e var-type) (recur e))
          
          (define env*
-           (if (list? var-type)
-               (type-check-add-env env var var-type)
-               env))
+           (if (is-function? var-type)
+               env
+               (type-check-add-env env var var-type)))
+         
          (define fenv*
-           (if (list? var-type)
-               fenv
-               (type-check-add-f-env fenv var var-type)))
+           (if (is-function? var-type)
+               (type-check-add-f-env fenv var var-type)
+               fenv))
          
          (let-values ([(body-e body-ty) ((type-check env* fenv*) body)])
            (values `(has-type (let ([,var ,var-e]) ,body-e) ,body-ty)
@@ -334,39 +336,39 @@
 (define expose-allocation
   (lambda (e)
     (match e
-      [`(program (type ,ty) ,(app expose-allocation body))
-       `(program (type ,ty) ,body)]
+      [`(program (type ,ty) ,fun-defs ... ,body)
+       `(program (type ,ty) ,@(map expose-allocation fun-defs)  ,(expose-allocation body))]
       [`(has-type (vector ,(app expose-allocation e*) ...) ,vec-type)
        (define len (length e*))
        (define size (* 8 (+ len 1)))
        (define vec (gensym 'alloc.))
        (define x* (map (lambda (e) (gensym 'vec-elt.)) e*))
        (define init-vec (foldr
-                          (lambda (loc elt init)
-                            (define v (gensym 'initrec.))
-                            `(let ([,v (has-type (vector-set! ,vec ,loc ,elt) Void)])
-                               ,init))
-                          vec (range len) x*))
+                         (lambda (loc elt init)
+                           (define v (gensym 'initrec.))
+                           `(let ([,v (has-type (vector-set! ,vec ,loc ,elt) Void)])
+                              ,init))
+                         vec (range len) x*))
        (define voidy (gensym 'collectret.))
        (define alloc-init-vec
          `(has-type
-            (let ([,voidy
-                   (has-type
-                    (if (has-type
-                         (< (has-type
-                             (+ (has-type (global-value free_ptr) Integer)
-                                (has-type ,size Integer))
-                             Integer)
-                            (has-type (global-value fromspace_end) Integer))
-                         Boolean)
-                        (has-type (void) Void)
-                        (has-type (collect ,size) Void))
-                    Void)])
-              (has-type
-               (let ([,vec (has-type (allocate ,len ,vec-type) ,vec-type)])
-                 ,init-vec)
-               ,vec-type))
-            ,vec-type))
+           (let ([,voidy
+                  (has-type
+                   (if (has-type
+                        (< (has-type
+                            (+ (has-type (global-value free_ptr) Integer)
+                               (has-type ,size Integer))
+                            Integer)
+                           (has-type (global-value fromspace_end) Integer))
+                        Boolean)
+                       (has-type (void) Void)
+                       (has-type (collect ,size) Void))
+                   Void)])
+             (has-type
+              (let ([,vec (has-type (allocate ,len ,vec-type) ,vec-type)])
+                ,init-vec)
+              ,vec-type))
+           ,vec-type))
        (foldr
         (lambda (x e init)
           `(has-type (let ([,x ,e])
@@ -374,9 +376,9 @@
                      ,vec-type))
         alloc-init-vec x* e*)]
       [`(has-type ,(app expose-allocation e) ,t)
-	    `(has-type ,e ,t)]
-	   [(? symbol?) e]
-	   [(? integer?) e]
+       `(has-type ,e ,t)]
+      [(? symbol?) e]
+      [(? integer?) e]
       [(? boolean?) e]
       [`(void) e]
       [`(if ,(app expose-allocation cnd) 
@@ -390,12 +392,21 @@
                                  (set-member? primitive-set op))
                       (define new-es (map expose-allocation es))
                       `(,op ,@new-es)]
+      [`(,fname ,es ...)
+       `(,(expose-allocation fname) ,@(map expose-allocation es))]
       [`(let ([,x ,(app expose-allocation rhs)]) 
           ,(app expose-allocation body))
        `(let ([,x ,rhs]) ,body)]
-
+      [`(define (,fun-name ,args ...) : ,ret-type ,fbody)
+       `(define (,fun-name ,args ...) : ,ret-type ,(expose-allocation fbody))]
       [else
        (error "in expose-allocation, unmatched" e)])))
+
+
+#; (define reveal-functions
+     (lambda (ast)
+    (
+     )))
                                    
 
 (define flatten
@@ -1112,7 +1123,7 @@
 (define test-passes
  (list
   `("uniquify"              ,(uniquify '())                                   ,interp-scheme)
-  ; `("expose allocation"     ,expose-allocation                                ,interp-scheme)
+  `("expose allocation"     ,expose-allocation                                ,interp-scheme)
   ; `("flatten"               ,(flatten #t)                                     ,interp-C)
   ; `("instruction selection" ,select-instructions                              ,interp-x86)
   ; `("liveness analysis"     ,(uncover-live (void))                            ,interp-x86)
