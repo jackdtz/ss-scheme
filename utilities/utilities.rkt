@@ -369,9 +369,9 @@
 (define (interp-tests name typechecker passes initial-interp test-family test-nums)
   (define checker (check-passes name typechecker passes initial-interp))
   (for ([test-number (in-list test-nums)])
-    (let ([test-name (format "~a_~a" test-family test-number)])
-      (debug "utilities/interp-test" test-name)
-      (checker test-name))))
+       (let ([test-name (format "~a_~a" test-family test-number)])
+         (debug "utilities/interp-test" test-name)
+         (checker test-name))))
 
 ;; The compiler-tests function takes a compiler name (a string), a
 ;; typechecker (see the comment for check-passes) a description of the

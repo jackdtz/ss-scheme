@@ -50,6 +50,13 @@
   (lambda (fenv name)
     (assoc name fenv)))
 
+(define normalize-func-type-format
+  (lambda (t)
+    (match t
+      [`(,args ... -> ,ret) (cons args ret)]
+      [`(Vector ,ts ...) `(Vector ,@(map normalize-func-type-format ts))]
+      [else t])))
+
 (define type-check-add-env
   (lambda (env key val)
     (if (hash-has-key? env key)
@@ -73,9 +80,13 @@
       (define recur (type-check env fenv))
       (match ast
         [`(program ,(and fun-defs
-                   `(define (,fun-names (,vars : ,arg-types) ...) : ,ret-types ,fbody))  ... ,body) 
-         (define types (map (lambda (arg-type ret-type) (cons arg-type ret-type))
+                   `(define (,fun-names [,vars : ,arg-types] ...) : ,ret-types ,fbody))  ... ,body)
+         
+         (define types (map (lambda (func-arg-types ret-type)
+                              (cons (map normalize-func-type-format func-arg-types)
+                                    (normalize-func-type-format ret-type)))
                             arg-types ret-types))
+      
          (define fenv* (foldl (lambda (fname type init)
                                (type-check-add-f-env init fname type))
                              (hash) fun-names types))
@@ -100,6 +111,95 @@
                       (error (format "undefined variable ~a " ast)))
                     (values `(has-type ,ast ,f-type) f-type))]))]
            
+        
+        
+         
+        ; compare operations
+
+        
+        [`(,logic-op ,e1 ,e2)
+         #:when (set-member? logic-instructions logic-op)
+         (define-values (e1* e1-ty) (recur e1))
+         (define-values (e2* e2-ty) (recur e2)) 
+         (match* (e1-ty e2-ty)
+           [('Boolean 'Boolean)
+            (values `(has-type (,logic-op ,e1* ,e2*) Boolean) 'Boolean)]
+            [(_ _) 
+             (error
+              (format "type-check: ~a expects two operands: ~a(type:~a) and ~a(type:~a) to have the same type 'Boolean (ast: ~a"
+                      logic-op e1* e1-ty e2* e2-ty ast))])]
+        
+        [`(let ([,var ,e]) ,body)
+         (define-values (var-e var-type) (recur e))
+         
+         (define env*
+           (if (list? var-type)
+               (type-check-add-env env var var-type)
+               env))
+         (define fenv*
+           (if (list? var-type)
+               fenv
+               (type-check-add-f-env fenv var var-type)))
+         
+         (let-values ([(body-e body-ty) ((type-check env* fenv*) body)])
+           (values `(has-type (let ([,var ,var-e]) ,body-e) ,body-ty)
+                   body-ty))]
+        
+        [`(not ,(app recur e type))
+         (match type
+           ['Boolean (values `(has-type (not ,e) Boolean) 'Boolean)]
+           [else (error "type-check: 'not expects a Boolean" ast type)])]
+        
+        [`(- ,(app recur e type))
+         (match type
+           ['Integer (values `(has-type (- ,e) Integer) 'Integer)]
+           [else (error "type-check: '- expects an Integer" ast type)])]
+        
+        [`(+ ,(app recur e1 e1-ty)
+             ,(app recur e2 e2-ty))
+         (match* (e1-ty e2-ty)
+           [('Integer 'Integer) (values `(has-type (+ ,e1 ,e2) Integer) 'Integer)]
+           [('Integer _)
+            (error "type-check: '+ expects e2 to be an Integer" ast e2)]
+           [(_ 'Integer)
+            (error "type-check: '+ expects e1 to be an Integer" ast e1)]
+           [(_ _) 
+            (error "type-check: '+ expects e1, e2 to be Integer" ast e1 e2)])]
+
+        [`(eq? ,(app recur e1* e1-ty)
+               ,(app recur e2* e2-ty))
+         (match* (e1-ty e2-ty)
+           [(`(Vector ,ts1 ...) `(Vector ,ts2 ...))
+            (values `(has-type (eq? ,e1* ,e2*) Boolean) 'Boolean)]
+           [(_ _)
+            (unless (equal? e1-ty e2-ty)
+              (error "type-check: eq? expect two operands have the same type" ast e1* e2*))
+            (values `(has-type (eq? ,e1* ,e2*) Boolean) 'Boolean)])]
+        [`(,cmp-op ,e1 ,e2)
+         #:when (set-member? cmp-instructions cmp-op)
+         (define-values (e1* e1-ty) (recur e1))
+         (define-values (e2* e2-ty) (recur e2)) 
+         (match* (e1-ty e2-ty)
+           [('Integer 'Integer)
+            (values `(has-type (,cmp-op ,e1* ,e2*) Boolean) 'Boolean)]
+            [(_ _) 
+             (error
+              (format "type-check: ~a expects two operands: ~a(type:~a) and ~a(type:~a) to have the same type Integer (ast: ~a"
+                      cmp-op e1* e1-ty e2* e2-ty ast))])]
+        
+        [`(if ,cmp ,t ,f) 
+         (let-values ([(e-cmp type-cmp) (recur cmp)]
+                      [(e-t type-t) (recur t)]
+                      [(e-f type-f) (recur f)])
+           (match type-cmp
+             ['Boolean (match (equal? type-t type-f)
+                         [#t (values `(has-type (if ,e-cmp ,e-t ,e-f) ,type-t) type-t)]
+                         [else
+                          (error (format "type-check: (thn:~a) and (els:~a) from ~a have different type ~a and ~a" 
+                                  t f ast type-t type-f))])]
+             [else
+              (error (format "type-check: condition expression ~a from ~a expects a boolean type, but get type ~a" 
+                                  cmp ast type-cmp))]))]
         
         ; Vector
         [`(void) (values `(has-type (void) Void) 'Void)]
@@ -144,6 +244,7 @@
                     (define fenv (cdr env-fenv))
                     (match type
                       [`(,args ... -> ,ret) (cons env (type-check-add-f-env fenv var `(,args . ,ret)))]
+                      [`(Vector ,args ...) (cons (type-check-add-env env var `(Vector ,@(map normalize-func-type-format args))) fenv)]
                       [else (cons (type-check-add-env env var type) fenv)]))
                   (cons env fenv) vars types))
 
@@ -151,8 +252,9 @@
          (define fenv* (cdr updated-env-fenv))
          
          (define-values (body-e body-type) ((type-check env* fenv*) body))
-         (unless (equal? ret-type body-type)
-           (error "body type and return type mismatch for function " fun-name))
+         (unless (equal? (normalize-func-type-format ret-type) body-type)
+           (error (format "body type: ~a and return type: ~a mismatch for function ~a\n current env: ~a \n current fenv: ~a"
+                          body-type ret-type fun-name env fenv)))
          (define args (map (lambda (var type) `(,var : ,type)) vars types))
          (values `(has-type (define (,fun-name ,@args) : ,ret-type ,body-e)
                             ,ret-type)
@@ -160,10 +262,10 @@
         
         [`(,fun-name ,pargs ...) 
          #:when (not (set-member? primitive-set fun-name))
-         (define fun-type (type-check-lookup fenv fun-name))
+         (define-values (fun-e fun-type) (recur fun-name))
          
          (unless (not (null? fun-type))
-           (error "funtion is not defined" fun-name ast))
+           (error (format "funtion ~a is not defined.\n ast: ~a\n env: ~a\n fenv: ~a" fun-name ast env fenv)))
          
          (define arg-types (car fun-type))
          (define ret-type (cdr fun-type))
@@ -177,82 +279,10 @@
                [else arg-type]))
            (unless (equal? arg-type* ptype)
              (error (format "unmatch argument type in ~a, expect ~a but got ~a" fun-name arg-type ptype))))
-         (values `(has-type (,fun-name ,@parg-e) ,ret-type) ret-type)]
-         
-        ; compare operations
-        [`(eq? ,(app recur e1* e1-ty)
-               ,(app recur e2* e2-ty))
-         (match* (e1-ty e2-ty)
-           [(`(Vector ,ts1 ...) `(Vector ,ts2 ...))
-            (values `(has-type (eq? ,e1* ,e2*) Boolean) 'Boolean)]
-           [(_ _)
-            (unless (equal? e1-ty e2-ty)
-              (error "type-check: eq? expect two operands have the same type" ast e1* e2*))
-            (values `(has-type (eq? ,e1* ,e2*) Boolean) 'Boolean)])]
-        [`(,cmp-op ,e1 ,e2)
-         #:when (set-member? cmp-instructions cmp-op)
-         (define-values (e1* e1-ty) (recur e1))
-         (define-values (e2* e2-ty) (recur e2)) 
-         (match* (e1-ty e2-ty)
-           [('Integer 'Integer)
-            (values `(has-type (,cmp-op ,e1* ,e2*) Boolean) 'Boolean)]
-            [(_ _) 
-             (error
-              (format "type-check: ~a expects two operands: ~a(type:~a) and ~a(type:~a) to have the same type Integer (ast: ~a"
-                      cmp-op e1* e1-ty e2* e2-ty ast))])]
-        
-        [`(,logic-op ,e1 ,e2)
-         #:when (set-member? logic-instructions logic-op)
-         (define-values (e1* e1-ty) (recur e1))
-         (define-values (e2* e2-ty) (recur e2)) 
-         (match* (e1-ty e2-ty)
-           [('Boolean 'Boolean)
-            (values `(has-type (,logic-op ,e1* ,e2*) Boolean) 'Boolean)]
-            [(_ _) 
-             (error
-              (format "type-check: ~a expects two operands: ~a(type:~a) and ~a(type:~a) to have the same type 'Boolean (ast: ~a"
-                      logic-op e1* e1-ty e2* e2-ty ast))])]
-        
-        [`(let ([,var ,(app recur var-e var-type)]) ,body)
-         (let ([new-env (type-check-add-env env var var-type)])
-           (let-values ([(body-e body-ty) ((type-check new-env fenv) body)])
-             (values `(has-type (let ([,var ,var-e]) ,body-e) ,body-ty)
-                     body-ty)))]
-        
-        [`(not ,(app recur e type))
-         (match type
-           ['Boolean (values `(has-type (not ,e) Boolean) 'Boolean)]
-           [else (error "type-check: 'not expects a Boolean" ast type)])]
-        
-        [`(- ,(app recur e type))
-         (match type
-           ['Integer (values `(has-type (- ,e) Integer) 'Integer)]
-           [else (error "type-check: '- expects an Integer" ast type)])]
-        
-        [`(+ ,(app recur e1 e1-ty)
-             ,(app recur e2 e2-ty))
-         (match* (e1-ty e2-ty)
-           [('Integer 'Integer) (values `(has-type (+ ,e1 ,e2) Integer) 'Integer)]
-           [('Integer _)
-            (error "type-check: '+ expects e2 to be an Integer" ast e2)]
-           [(_ 'Integer)
-            (error "type-check: '+ expects e1 to be an Integer" ast e1)]
-           [(_ _) 
-            (error "type-check: '+ expects e1, e2 to be Integer" ast e1 e2)])]
-        
-        [`(if ,cmp ,t ,f) 
-         (let-values ([(e-cmp type-cmp) (recur cmp)]
-                      [(e-t type-t) (recur t)]
-                      [(e-f type-f) (recur f)])
-           (match type-cmp
-             ['Boolean (match (equal? type-t type-f)
-                         [#t (values `(has-type (if ,e-cmp ,e-t ,e-f) ,type-t) type-t)]
-                         [else
-                          (error (format "type-check: (thn:~a) and (els:~a) from ~a have different type ~a and ~a" 
-                                  t f ast type-t type-f))])]
-             [else
-              (error (format "type-check: condition expression ~a from ~a expects a boolean type, but get type ~a" 
-                                  cmp ast type-cmp))]))]))))
+         (values `(has-type (,fun-e ,@parg-e) ,ret-type) ret-type)]
+
+
+        ))))
 
 
 (define uniquify
@@ -297,7 +327,6 @@
                                    (set-member? vec-primitive-set op))
                         `(,op ,@(map (lambda (e) (recur e)) es))]
         [`(,fname ,es ...)
-         #:when (in-env? env fname)
          `(,(recur fname) ,@(map (lambda (e) (recur e)) es))]
         [else (error "Uniquify could not match " e)]))))
 
@@ -1066,13 +1095,18 @@
     )))
 
 
-(run 
+#;(run 
   '(program
-       (define (id [x : Integer]) : Integer x)
-        (id 42)  
-     
-     )
-  
+    (define (id [x : Integer]) : Integer x)
+    
+    (define (f [n : Integer] [clos : (Vector (Integer -> Integer) (Vector Integer))]) : Integer
+      (if (eq? n 100)
+          ((vector-ref clos 0) (vector-ref (vector-ref clos 1) 0))
+      (f (+ n 1) (vector (vector-ref clos 0) (vector-ref clos 1)))))
+    
+    (f 0 (vector id (vector 42)))  
+    
+    )
 )
        
 (define test-passes
@@ -1105,10 +1139,10 @@
     
     ))
        
-; (begin
-;  (for ([test compiler-list])
-;   (apply interp-tests test))
-;  (pretty-display "all passed"))
+(begin
+  (for ([test compiler-list])
+   (apply interp-tests test))
+  (pretty-display "all passed"))
 
 
 
