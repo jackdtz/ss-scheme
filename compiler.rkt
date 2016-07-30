@@ -153,7 +153,7 @@
          (define-values (body-e body-type) ((type-check env* fenv*) body))
          (unless (equal? ret-type body-type)
            (error "body type and return type mismatch for function " fun-name))
-         (define args (map (lambda (var type) `(,var : type)) vars types))
+         (define args (map (lambda (var type) `(,var : ,type)) vars types))
          (values `(has-type (define (,fun-name ,@args) : ,ret-type ,body-e)
                             ,ret-type)
                  ret-type)]
@@ -289,9 +289,9 @@
          (define new-env
            (foldl (lambda (var new-temp env)
                     (cons `(,var . ,new-temp) env))
-                  env vars types))
+                  env vars var-temps))
          (define new-arg-types (map (lambda (temp type) `(,temp : ,type)) var-temps types))
-        `(define (,fun-name ,@new-arg-types) : ,ret-type ,((uniquify new-env) fbody))]
+        `(define (,(recur fun-name) ,@new-arg-types) : ,ret-type ,((uniquify new-env) fbody))]
          
         [`(,op ,es ...) #:when (or (set-member? primitive-set op)
                                    (set-member? vec-primitive-set op))
@@ -1068,45 +1068,42 @@
 
 (run 
   '(program
-      (define (map-vec [f : (Integer -> Integer)]
-      [v : (Vector Integer Integer)])
-      : (Vector Integer Integer)
-      (vector (f (vector-ref v 0)) (f (vector-ref v 1))))
-      (define (add1 [x : Integer]) : Integer
-      (+ x 1))
-      (vector-ref (map-vec add1 (vector 0 41)) 1))
+       (define (id [x : Integer]) : Integer x)
+        (id 42)  
      
      )
+  
+)
        
-; (define test-passes
-;  (list
-;   `("uniquify"              ,(uniquify '())                                   ,interp-scheme)
-;   `("expose allocation"     ,expose-allocation                                ,interp-scheme)
-;   `("flatten"               ,(flatten #t)                                     ,interp-C)
-;   ; `("instruction selection" ,select-instructions                              ,interp-x86)
-;   ; `("liveness analysis"     ,(uncover-live (void))                            ,interp-x86)
-;   ; `("build interference"    ,(build-interference (void) (void) (void))        ,interp-x86)
-;   ; `("allocate register"     ,allocate-registers                               ,interp-x86) 
-;   ; ; `("lower-conditionals"    ,lower-conditionals                               ,interp-x86)
-;   ; `("patch-instructions"    ,patch-instructions                                ,interp-x86)
-;   ; `("x86"                   ,print-x86                                          #f)
-;   ))
+(define test-passes
+ (list
+  `("uniquify"              ,(uniquify '())                                   ,interp-scheme)
+  ; `("expose allocation"     ,expose-allocation                                ,interp-scheme)
+  ; `("flatten"               ,(flatten #t)                                     ,interp-C)
+  ; `("instruction selection" ,select-instructions                              ,interp-x86)
+  ; `("liveness analysis"     ,(uncover-live (void))                            ,interp-x86)
+  ; `("build interference"    ,(build-interference (void) (void) (void))        ,interp-x86)
+  ; `("allocate register"     ,allocate-registers                               ,interp-x86) 
+  ; ; `("lower-conditionals"    ,lower-conditionals                               ,interp-x86)
+  ; `("patch-instructions"    ,patch-instructions                                ,interp-x86)
+  ; `("x86"                   ,print-x86                                          #f)
+  ))
 
-; (define suite-list
-;   `((0 . ,(range 1 28))
-;     (1 . ,(range 1 37))
-;     (2 . ,(range 1 21))
-;     (3 . ,(range 1 20))
-;     (4 . ,(range 0 8))
-;     (6 . ,(range 0 10))
-;     (7 . ,(range 0 9))
-;     ))
+(define suite-list
+  `((0 . ,(range 1 28))
+    (1 . ,(range 1 37))
+    (2 . ,(range 1 21))
+    (3 . ,(range 1 20))
+    (4 . ,(range 0 8))
+    (6 . ,(range 0 10))
+    (7 . ,(range 0 9))
+    ))
 
-; (define compiler-list
-;   ;; Name           Typechecker               Compiler-Passes      Initial interpreter   Test-name    Valid suites
-;   `(("conditionals"  ,(type-check (void))    ,test-passes          ,interp-scheme       "s2"         ,(cdr (assq 2 suite-list)))
+(define compiler-list
+  ;; Name           Typechecker               Compiler-Passes      Initial interpreter   Test-name    Valid suites
+  `(("conditionals"  ,(type-check (void) (void))    ,test-passes          ,interp-scheme       "s3"         ,(cdr (assq 3 suite-list)))
     
-;     ))
+    ))
        
 ; (begin
 ;  (for ([test compiler-list])
