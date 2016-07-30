@@ -46,14 +46,17 @@
         (hash-ref env key)
         '())))
 
+(define in-env?
+  (lambda (fenv name)
+    (assoc name fenv)))
 
-(define add-env
+(define type-check-add-env
   (lambda (env key val)
     (if (hash-has-key? env key)
         (hash-set env key (cons val (hash-ref env key)))
         (hash-set env key (list val)))))
 
-(define add-f-env
+(define type-check-add-f-env
   (lambda (env fname type)
     (if (hash-has-key? env fname)
         (error "duplicated function in program: " fname)
@@ -74,7 +77,7 @@
          (define types (map (lambda (arg-type ret-type) (cons arg-type ret-type))
                             arg-types ret-types))
          (define fenv* (foldl (lambda (fname type init)
-                               (add-f-env init fname type))
+                               (type-check-add-f-env init fname type))
                              (hash) fun-names types))
          (define env* (hash))
          (let-values ([(fun-defs-e fun-types) (map2 (lambda (def) ((type-check env* fenv*) def))
@@ -95,7 +98,7 @@
                   (let ([f-type (type-check-lookup fenv ast)])
                     (unless (not (null? f-type))
                       (error (format "undefined variable ~a " ast)))
-                    (values `(hash-type ,ast ,f-type) f-type))]))]
+                    (values `(has-type ,ast ,f-type) f-type))]))]
            
         
         ; Vector
@@ -140,8 +143,8 @@
                     (define env (car env-fenv))
                     (define fenv (cdr env-fenv))
                     (match type
-                      [`(,args ... -> ,ret) (cons env (add-f-env fenv var `(,args . ,ret)))]
-                      [else (cons (add-env env var type) fenv)]))
+                      [`(,args ... -> ,ret) (cons env (type-check-add-f-env fenv var `(,args . ,ret)))]
+                      [else (cons (type-check-add-env env var type) fenv)]))
                   (cons env fenv) vars types))
 
          (define env* (car updated-env-fenv))
@@ -151,7 +154,7 @@
          (unless (equal? ret-type body-type)
            (error "body type and return type mismatch for function " fun-name))
          (define args (map (lambda (var type) `(,var : type)) vars types))
-         (values `(has-type (define (,fun-name ,@args : ,ret-type ,body-e))
+         (values `(has-type (define (,fun-name ,@args) : ,ret-type ,body-e)
                             ,ret-type)
                  ret-type)]
         
@@ -211,7 +214,7 @@
                       logic-op e1* e1-ty e2* e2-ty ast))])]
         
         [`(let ([,var ,(app recur var-e var-type)]) ,body)
-         (let ([new-env (add-env env var var-type)])
+         (let ([new-env (type-check-add-env env var var-type)])
            (let-values ([(body-e body-ty) ((type-check new-env fenv) body)])
              (values `(has-type (let ([,var ,var-e]) ,body-e) ,body-ty)
                      body-ty)))]
@@ -270,10 +273,32 @@
          (let ([new-x (gensym x)])
            `(let ([,new-x ,new-e])
               ,((uniquify (cons `(,x . ,new-x) env)) body)))]
-        [`(program (type ,t) ,e) `(program (type ,t) ,(recur e))]
+        
+        ; main program
+        [`(program (type ,t) ,(and fun-defs `(has-type (define (,fun-names ,args ...) : ,ret ,fbody) ,ts)) ... ,e)
+         (define f-temps (map (lambda (f) (cons f (gensym 'function.))) fun-names))
+         (define new-env
+           (foldl (lambda (f-temp env)
+                    (cons f-temp env))
+                 env f-temps))
+         `(program (type ,t) ,@(map (lambda (def) ((uniquify new-env) def)) fun-defs)
+                   ,((uniquify new-env) e))]
+        
+        [`(define (,fun-name (,vars : ,types) ...) : ,ret-type ,fbody)
+         (define var-temps (map (lambda (var) (gensym 'arg.)) vars))
+         (define new-env
+           (foldl (lambda (var new-temp env)
+                    (cons `(,var . ,new-temp) env))
+                  env vars types))
+         (define new-arg-types (map (lambda (temp type) `(,temp : ,type)) var-temps types))
+        `(define (,fun-name ,@new-arg-types) : ,ret-type ,((uniquify new-env) fbody))]
+         
         [`(,op ,es ...) #:when (or (set-member? primitive-set op)
                                    (set-member? vec-primitive-set op))
                         `(,op ,@(map (lambda (e) (recur e)) es))]
+        [`(,fname ,es ...)
+         #:when (in-env? env fname)
+         `(,(recur fname) ,@(map (lambda (e) (recur e)) es))]
         [else (error "Uniquify could not match " e)]))))
 
 
@@ -1016,7 +1041,7 @@
     
    (let* (
            [checked ((type-check '() '()) e)]
-           ; [uniq ((uniquify '()) checked)]
+           [uniq ((uniquify '()) checked)]
            ; [expo (expose-allocation uniq)]
            ; [flat ((flatten #t) expo)]
            ; [instrs (select-instructions flat)]
@@ -1028,7 +1053,7 @@
            ; [x86 (print-x86 patched)]
            )
       (log checked)
-      ; (log uniq)
+      (log uniq)
       ; (log expo)
       ; (log flat)
       ; (log instrs)
