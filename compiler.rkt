@@ -495,10 +495,25 @@
                                   `((,temp . ,type)))]
                [else
                 (values e '() '())])]
-        [`(program (type ,t) ,e) 
+        [`(has-type (function-ref ,fname) ,ty)
+         (define ret (gensym 'temp.))
+         (values ret
+                 `((assign ,ret (function-ref ,fname)))
+                 `((,ret . ,ty)))]
+        [`(has-type (app ,fname ,args ...) ,ty)
+         (define-values (fname-e fname-stms fname-vars) ((flatten #t) fname))
+         (define-values (args-es args-stms args-vars) (map3 (flatten #t) args))
+         (define ret (gensym 'temp.))
+         (values ret
+                 `(,@(append* fname-stms args-stms) (assign ,ret (app ,fname-e ,@args-es)))
+                 (cons `(,ret . ,ty) (append* fname-vars args-vars)))]
+        [`(define (,fun-name ,args ...) : ,ret ,fbody)
+         (define-values (fbody-e fbody-stms fbody-vars) ((flatten #t) fbody))
+         `(define (,fun-name ,@args) : ,ret ,fbody-vars ,@fbody-stms (return ,fbody-e))]
+        [`(program (type ,t) ,fun-defs ... ,e) 
          (let-values ([(e-exp e-stms e-vars) ((flatten #t) e)])
-           `(program ,e-vars (type ,t) ,@(append e-stms `((return ,e-exp)))))]
-        
+           (define fun-def-flat (map (lambda (def) ((flatten #t) def)) fun-defs))
+           `(program ,e-vars (type ,t) (defines ,@fun-def-flat) ,@(append e-stms `((return ,e-exp)))))]        
         [`(has-type (if ,cnd ,thn ,els) ,if-type)
          (let-values ([(new-thn thn-stms thn-vars) ((flatten #t) thn)]
                       [(new-els els-stms els-vars) ((flatten #t) els)])
@@ -1103,7 +1118,7 @@
            [uniq ((uniquify '()) checked)]           
            [revealed (reveal-functions uniq)]
            [expo (expose-allocation revealed)]
-           ; [flat ((flatten #t) expo)]
+           [flat ((flatten #t) expo)]
            ; [instrs (select-instructions flat)]
            ; [liveness ((uncover-live (void)) instrs)]
            ; [graph ((build-interference (void) (void) (void)) liveness)]
@@ -1116,7 +1131,7 @@
      (log uniq)
      (log revealed)
      (log expo)  
-      ; (log flat)
+     (log flat)
       ; (log instrs)
       ; (log liveness)
       ; (log graph)
@@ -1144,12 +1159,11 @@
      `("uniquify"                ,(uniquify '())                                   ,interp-scheme)
      `("reveal-functions"        ,reveal-functions                                 ,interp-F)
      `("expose allocation"       ,expose-allocation                                ,interp-F)
-
-     ; `("flatten"               ,(flatten #t)                                     ,interp-C)
+     `("flatten"                 ,(flatten #f)                                     ,interp-C)
      ; `("instruction selection" ,select-instructions                              ,interp-x86)
      ; `("liveness analysis"     ,(uncover-live (void))                            ,interp-x86)
      ; `("build interference"    ,(build-interference (void) (void) (void))        ,interp-x86)
-  ; `("allocate register"     ,allocate-registers                               ,interp-x86) 
+     ; `("allocate register"     ,allocate-registers                               ,interp-x86) 
      ; ; `("lower-conditionals"    ,lower-conditionals                               ,interp-x86)
      ; `("patch-instructions"    ,patch-instructions                                ,interp-x86)
      ; `("x86"                   ,print-x86                                          #f)
@@ -1170,11 +1184,16 @@
   `(("conditionals"  ,(type-check (void) (void))    ,test-passes          ,interp-scheme       "s3"         ,(cdr (assq 3 suite-list)))
     
     ))
-       
+
+
+
+
+ 
 (begin
   (for ([test compiler-list])
    (apply interp-tests test))
   (pretty-display "all passed"))
+
 
 
  
