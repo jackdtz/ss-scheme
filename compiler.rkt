@@ -48,15 +48,10 @@
 
 (define is-function?
   (lambda (x)
-    (not (list? x))))
+    (match x
+      [`(,args ... -> ,ret) #t]
+      [else #f])))
 
-
-(define normalize-func-type-format
-  (lambda (t)
-    (match t
-      [`(,args ... -> ,ret) (cons args ret)]
-      [`(Vector ,ts ...) `(Vector ,@(map normalize-func-type-format ts))]
-      [else t])))
 
 (define type-check-add-env
   (lambda (env key val)
@@ -79,13 +74,13 @@
   (lambda (env fenv)
     (lambda (ast)
       (define recur (type-check env fenv))
+
       (match ast
         [`(program ,(and fun-defs
                    `(define (,fun-names [,vars : ,arg-types] ...) : ,ret-types ,fbody))  ... ,body)
          
          (define types (map (lambda (func-arg-types ret-type)
-                              (cons (map normalize-func-type-format func-arg-types)
-                                    (normalize-func-type-format ret-type)))
+                              `(,@func-arg-types -> ,ret-type))
                             arg-types ret-types))
       
          (define fenv* (foldl (lambda (fname type init)
@@ -242,11 +237,11 @@
          
          (define updated-env-fenv
            (foldl (lambda (var type env-fenv)
+
                     (define env (car env-fenv))
                     (define fenv (cdr env-fenv))
                     (match type
-                      [`(,args ... -> ,ret) (cons env (type-check-add-f-env fenv var `(,args . ,ret)))]
-                      [`(Vector ,args ...) (cons (type-check-add-env env var `(Vector ,@(map normalize-func-type-format args))) fenv)]
+                      [`(,args ... -> ,ret) (cons env (type-check-add-f-env fenv var type))]
                       [else (cons (type-check-add-env env var type) fenv)]))
                   (cons env fenv) vars types))
 
@@ -254,7 +249,7 @@
          (define fenv* (cdr updated-env-fenv))
          
          (define-values (body-e body-type) ((type-check env* fenv*) body))
-         (unless (equal? (normalize-func-type-format ret-type) body-type)
+         (unless (equal? ret-type body-type)
            (error (format "body type: ~a and return type: ~a mismatch for function ~a\n current env: ~a \n current fenv: ~a"
                           body-type ret-type fun-name env fenv)))
          (define args (map (lambda (var type) `(,var : ,type)) vars types))
@@ -268,22 +263,20 @@
          
          (unless (not (null? fun-type))
            (error (format "funtion ~a is not defined.\n ast: ~a\n env: ~a\n fenv: ~a" fun-name ast env fenv)))
-         
-         (define arg-types (car fun-type))
-         (define ret-type (cdr fun-type))
-         (define-values (parg-e parg-types) (map2 (lambda (parg) ((type-check env fenv) parg)) pargs))
 
-         (for/list ([arg-type arg-types]
-                    [ptype parg-types])
-           (define arg-type*
-             (match arg-type
-               [`(,args ... -> ,ret) `(,args . ,ret)]
-               [else arg-type]))
-           (unless (equal? arg-type* ptype)
-             (error (format "unmatch argument type in ~a, expect ~a but got ~a" fun-name arg-type ptype))))
-         (values `(has-type (,fun-e ,@parg-e) ,ret-type) ret-type)]
-
-
+         (match fun-type
+           [`(,arg-types ... -> ,ret-type)
+            (define-values (parg-e parg-types) (map2 (lambda (parg) ((type-check env fenv) parg)) pargs))
+            
+            (for/list ([arg-type arg-types]
+                       [ptype parg-types])
+                      (unless (equal? arg-type ptype)
+                        (error (format "unmatch argument type in ~a, expect ~a but got ~a" fun-name arg-type ptype))))
+            (values `(has-type (,fun-e ,@parg-e) ,ret-type) ret-type)]
+           [else
+            (error "function type error" ast)])]
+           
+           
         ))))
 
 
@@ -333,11 +326,52 @@
         [else (error "Uniquify could not match " e)]))))
 
 
+(define reveal-functions
+  (lambda (e)
+    (match e
+      [`(program (type ,t) ,fun-defs ... ,body)
+       `(program (type ,t) ,@(map reveal-functions fun-defs) ,(reveal-functions body))]
+            [(? symbol?) e]
+      [(? integer?) e]
+      [(? boolean?) e]
+      [`(void) e]
+      [`(has-type ,(? symbol? s) ,t)
+       (if (is-function? t)
+           `(has-type (function-ref ,s) ,t)
+           e)]
+      [`(has-type ,e ,t) `(has-type ,(reveal-functions e) ,t)]
+            [`(if ,(app reveal-functions cnd) 
+            ,(app reveal-functions thn)
+            ,(app reveal-functions els))
+       `(if ,cnd ,thn ,els)]
+      [`(and ,(app reveal-functions e1)
+             ,(app reveal-functions e2))
+       `(and ,e1 ,e2)]
+      [`(,op ,es ...) #:when (or (set-member? vec-primitive-set op)
+                                 (set-member? primitive-set op))
+                      (define new-es (map reveal-functions es))
+                      `(,op ,@new-es)]
+      [`(,(and fname `(has-type ,e ,t)) ,es ...)
+       `(app ,(reveal-functions fname) ,@(map reveal-functions es))]
+      [`(let ([,x ,(app reveal-functions rhs)]) 
+          ,(app reveal-functions body))
+       `(let ([,x ,rhs]) ,body)]
+      [`(define (,fun-name ,args ...) : ,ret-type ,fbody)
+       `(define (,fun-name ,@args) : ,ret-type ,(reveal-functions fbody))]
+      [else
+       (error "in reveal-functions, unmatched" e)])))
+
+
 (define expose-allocation
   (lambda (e)
     (match e
       [`(program (type ,ty) ,fun-defs ... ,body)
        `(program (type ,ty) ,@(map expose-allocation fun-defs)  ,(expose-allocation body))]
+      [`(define (,fun-name ,args ...) : ,ret-type ,fbody)
+       `(define (,fun-name ,@args) : ,ret-type ,(expose-allocation fbody))]
+      [`(app ,fname ,es ...)
+       `(app ,(expose-allocation fname) ,@(map expose-allocation es))]
+      [`(function-ref ,name) e]
       [`(has-type (vector ,(app expose-allocation e*) ...) ,vec-type)
        (define len (length e*))
        (define size (* 8 (+ len 1)))
@@ -392,22 +426,15 @@
                                  (set-member? primitive-set op))
                       (define new-es (map expose-allocation es))
                       `(,op ,@new-es)]
-      [`(,fname ,es ...)
-       `(,(expose-allocation fname) ,@(map expose-allocation es))]
+      
       [`(let ([,x ,(app expose-allocation rhs)]) 
           ,(app expose-allocation body))
        `(let ([,x ,rhs]) ,body)]
-      [`(define (,fun-name ,args ...) : ,ret-type ,fbody)
-       `(define (,fun-name ,args ...) : ,ret-type ,(expose-allocation fbody))]
+      
       [else
        (error "in expose-allocation, unmatched" e)])))
 
-
-#; (define reveal-functions
-     (lambda (ast)
-    (
-     )))
-                                   
+                                
 
 (define flatten
   (lambda (need-temp)
@@ -1081,8 +1108,9 @@
     
    (let* (
            [checked ((type-check '() '()) e)]
-           [uniq ((uniquify '()) checked)]
-           ; [expo (expose-allocation uniq)]
+           [uniq ((uniquify '()) checked)]           
+           [revealed (reveal-functions uniq)]
+           [expo (expose-allocation revealed)]
            ; [flat ((flatten #t) expo)]
            ; [instrs (select-instructions flat)]
            ; [liveness ((uncover-live (void)) instrs)]
@@ -1092,9 +1120,10 @@
            ; [patched (patch-instructions lower-if)]
            ; [x86 (print-x86 patched)]
            )
-      (log checked)
-      (log uniq)
-      ; (log expo)
+     (log checked)
+     (log uniq)
+     (log revealed)
+     (log expo)  
       ; (log flat)
       ; (log instrs)
       ; (log liveness)
@@ -1106,33 +1135,34 @@
     )))
 
 
-#;(run 
+ #;(run 
   '(program
-    (define (id [x : Integer]) : Integer x)
-    
-    (define (f [n : Integer] [clos : (Vector (Integer -> Integer) (Vector Integer))]) : Integer
-      (if (eq? n 100)
-          ((vector-ref clos 0) (vector-ref (vector-ref clos 1) 0))
-      (f (+ n 1) (vector (vector-ref clos 0) (vector-ref clos 1)))))
-    
-    (f 0 (vector id (vector 42)))  
+    (define (id [f : (Integer -> Integer)]) : (Integer -> Integer) f)
+    (define (inc [x : Integer]) : Integer (+ x 1))
+    ((id inc) 41)
     
     )
 )
+
+(define interp (new interp-R3))
+(define interp-F (send interp interp-F '()))
        
 (define test-passes
- (list
-  `("uniquify"              ,(uniquify '())                                   ,interp-scheme)
-  `("expose allocation"     ,expose-allocation                                ,interp-scheme)
-  ; `("flatten"               ,(flatten #t)                                     ,interp-C)
-  ; `("instruction selection" ,select-instructions                              ,interp-x86)
-  ; `("liveness analysis"     ,(uncover-live (void))                            ,interp-x86)
-  ; `("build interference"    ,(build-interference (void) (void) (void))        ,interp-x86)
+  
+    (list
+     `("uniquify"                ,(uniquify '())                                   ,interp-scheme)
+;     `("reveal-functions"        ,reveal-functions                                 ,interp-F)
+;     `("expose allocation"       ,expose-allocation                                ,interp-scheme)
+
+     ; `("flatten"               ,(flatten #t)                                     ,interp-C)
+     ; `("instruction selection" ,select-instructions                              ,interp-x86)
+     ; `("liveness analysis"     ,(uncover-live (void))                            ,interp-x86)
+     ; `("build interference"    ,(build-interference (void) (void) (void))        ,interp-x86)
   ; `("allocate register"     ,allocate-registers                               ,interp-x86) 
-  ; ; `("lower-conditionals"    ,lower-conditionals                               ,interp-x86)
-  ; `("patch-instructions"    ,patch-instructions                                ,interp-x86)
-  ; `("x86"                   ,print-x86                                          #f)
-  ))
+     ; ; `("lower-conditionals"    ,lower-conditionals                               ,interp-x86)
+     ; `("patch-instructions"    ,patch-instructions                                ,interp-x86)
+     ; `("x86"                   ,print-x86                                          #f)
+     ))
 
 (define suite-list
   `((0 . ,(range 1 28))
@@ -1154,6 +1184,9 @@
   (for ([test compiler-list])
    (apply interp-tests test))
   (pretty-display "all passed"))
+
+
+ 
 
 
 

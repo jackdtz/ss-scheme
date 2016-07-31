@@ -790,66 +790,68 @@
     (define/public (interp-F env)
       (lambda (ast)
         (verbose "R3/interp-F" ast)
-  (define result
-        (match ast
-    ;; For R4
-          [`(define (,f [,xs : ,ps] ...) : ,rt ,body)
-           (cons f `(lambda ,xs ,body))]
-          [`(function-ref ,f)
-           (lookup f env)]
-          [`(app ,fun ,args ...)
-      (define arg-vals (map (interp-F env) args))
-      (define fun-val ((interp-F env) fun))
-            (match fun-val
+        (define result
+          (match ast
+            ;; For R4
+            [`(define (,f [,xs : ,ps] ...) : ,rt ,body)
+             (cons f `(lambda ,xs ,body))]
+            [`(function-ref ,f)
+             (lookup f env)]
+            [`(app ,fun ,args ...)
+             (define arg-vals (map (interp-F env) args))
+             (define fun-val ((interp-F env) fun))
+             (match fun-val
                [`(lambda (,xs ...) ,body)
                 (define new-env (append (map cons xs arg-vals) env))
-    ((interp-F new-env) body)]
+                ((interp-F new-env) body)]
                [else (error "interp-F, expected function, not" fun-val)])]
-          [`(program (type ,ty) ,ds ... ,body)
-      ((interp-F env) `(program ,@ds ,body))]
-          [`(program ,ds ... ,body)
-     ((initialize!) runtime-config:rootstack-size 
-      runtime-config:heap-size)
-           (let ([top-level (map  (interp-F '()) ds)])
-        ((interp-F top-level) body))]
-    ;; For R3
-    [`(global-value free_ptr)
-     (unbox free_ptr)]
-    [`(global-value fromspace_end)
-     (unbox fromspace_end)]
-          [`(allocate ,l ,ty) (build-vector l (lambda a uninitialized))]
-          [`(collect ,size)
-           (unless (exact-nonnegative-integer? size)
-             (error 'interp-F "invalid argument to collect in ~a" ast))
+            [`(program (type ,ty) ,ds ... ,body)
+             ((interp-F env) `(program ,@ds ,body))]
+            [`(program ,ds ... ,body)
+             ((initialize!) runtime-config:rootstack-size 
+                            runtime-config:heap-size)
+             (let ([top-level (map  (interp-F '()) ds)])
+               ((interp-F top-level) body))]
+            ;; For R3
+            [`(global-value free_ptr)
+             (unbox free_ptr)]
+            [`(global-value fromspace_end)
+             (unbox fromspace_end)]
+            [`(allocate ,l ,ty) (build-vector l (lambda a uninitialized))]
+            [`(collect ,size)
+             (unless (exact-nonnegative-integer? size)
+               (error 'interp-F "invalid argument to collect in ~a" ast))
            (void)]
-          [`(void) (void)]
-          ;; For R2
-          [`(has-type ,e ,t) ((interp-F env) e)]
-          [#t #t]
-          [#f #f]
-          [`(and ,e1 ,e2)
-           (match ((interp-F env) e1)
-             [#t (match ((interp-F env) e2)
-                   [#t #t] [#f #f])]
-             [#f #f])]
-          [`(if ,cnd ,thn ,els)
-           (if ((interp-F env) cnd)
-               ((interp-F env) thn)
-               ((interp-F env) els))]
-    ;; For R1
-    [(? symbol?)
-     (lookup ast env)]
-    [(? integer?) ast]
-    [`(let ([,x ,e]) ,body)
-     (let ([v ((interp-F env) e)])
-       ((interp-F (cons (cons x v) env)) body))]
-    [`(program ,e) ((interp-F '()) e)]
-    [`(,op ,args ...) #:when (set-member? (primitives) op)
-     (apply (interp-op op) (map (interp-F env) args))]
-    ))
-  (verbose "R3/interp-F" ast result)
-  result
-  ))
+            [`(void) (void)]
+            ;; For R2
+            [`(has-type ,e ,t) ((interp-F env) e)]
+            [#t #t]
+            [#f #f]
+            [`(and ,e1 ,e2)
+             (match ((interp-F env) e1)
+               [#t (match ((interp-F env) e2)
+                     [#t #t] [#f #f])]
+               [#f #f])]
+            [`(if ,cnd ,thn ,els)
+             (if ((interp-F env) cnd)
+                 ((interp-F env) thn)
+                 ((interp-F env) els))]
+            ;; For R1
+            [(? symbol?)
+             (lookup ast env)]
+            [(? integer?) ast]
+            [`(let ([,x ,e]) ,body)
+             (let ([v ((interp-F env) e)])
+               ((interp-F (cons (cons x v) env)) body))]
+            [`(program ,e) ((interp-F '()) e)]
+            [`(,op ,args ...) #:when (set-member? (primitives) op)
+                              (apply (interp-op op) (map (interp-F env) args))]
+            
+            
+            ))
+        (verbose "R3/interp-F" ast result)
+        result
+        ))
 
     (define/override (interp-C env)
       (lambda (ast)
