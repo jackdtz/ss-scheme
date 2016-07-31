@@ -45,8 +45,6 @@
 
     (define/public (interp-scheme env)
       (lambda (ast)
-        ; (pretty-print "-------------------this is in R0-----------------")
-        ; (pretty-print ast)
         (verbose "R0/interp-scheme" ast)
   (match ast
            [(? symbol?)
@@ -81,9 +79,6 @@
   
     (define/public (interp-C env)
       (lambda (ast)
-        (pretty-print "---------this is in R0--------------")
-        (pretty-print ast)
-        (newline)
         (vomit "R0/interp-C" ast env)
         (match ast
           [(? symbol? x) (lookup x env)]
@@ -208,9 +203,6 @@
 
     (define/override (interp-scheme env)
       (lambda (ast)
-        ; (pretty-print "-------------------this is in R1-----------------")
-        ; (pretty-print ast)
-        ; (newline)
         (verbose "R1/interp-scheme" ast)
   (match ast
           [`(has-type ,e ,t) ((interp-scheme env) e)]
@@ -231,11 +223,9 @@
 
     (define/override (interp-C env)
       (lambda (ast)
-        (pretty-print "---------this is in R1--------------")
-        (pretty-print ast)
-        (newline)
-  (vomit "R1/interp-C" ast)
-  (match ast
+
+        (vomit "R1/interp-C" ast)
+        (match ast
           [`(has-type ,e ,t) ((interp-C env) e)]
           [#t #t]
           [#f #f]
@@ -556,8 +546,6 @@
     
     (define/override (interp-scheme env)
       (lambda (ast)
-        ; (pretty-print "-------------------this is in R2-----------------")
-        ; (pretty-print ast)
         (verbose "R2/interp-scheme" ast)
   (match ast
           [`(void) (void)]
@@ -604,9 +592,6 @@
     
     (define/override (interp-C env)
       (lambda (ast)
-        (pretty-print "---------this is in R2--------------")
-        (pretty-print ast)
-        (newline)
         (vomit "R2/interp-C" ast)
         (match ast
           [`(void) (void)]
@@ -762,8 +747,6 @@
 
     (define/override (interp-scheme env)
       (lambda (ast)
-        ; (pretty-print "-------------------this is in R3-----------------")
-        ; (pretty-print ast)
         (verbose "R3/interp-scheme" ast)
         (match ast
           [`(define (,f [,xs : ,ps] ...) : ,rt ,body)
@@ -791,6 +774,7 @@
       (lambda (ast)
         (verbose "R3/interp-F" ast)
         (define result
+          
           (match ast
             ;; For R4
             [`(define (,f [,xs : ,ps] ...) : ,rt ,body)
@@ -855,9 +839,6 @@
 
     (define/override (interp-C env)
       (lambda (ast)
-        (pretty-print "---------this is in R3--------------")
-        (pretty-print ast)
-        (newline)
   (verbose "R3/interp-C" ast)
   (match ast
      [`(define (,f [,xs : ,ps] ...) : ,rt ,locals ,ss ...)
@@ -990,8 +971,6 @@
     
     (define/override (interp-scheme env)
       (lambda (ast)
-        ; (pretty-print "-------------------this is in R4-----------------")
-        ; (pretty-print ast)
         (verbose "R4/interp-scheme" ast)
   (match ast
           [`(lambda: ([,xs : ,Ts] ...) : ,rT ,body)
@@ -1111,8 +1090,6 @@
 
     (define/override (interp-scheme env)
       (lambda (ast)
-        ; (pretty-print "-------------------this is in R6-----------------")
-        ; (pretty-print ast)
         (verbose "R6/interp-scheme" ast)
   (define recur (interp-scheme env))
   (match ast
@@ -1146,9 +1123,7 @@
 
     (define/override (interp-C env)
       (lambda (ast)
-        (pretty-print "---------this is in R6--------------")
-        (pretty-print ast)
-        (newline)
+
   (verbose "R6/interp-C" ast)
   (match ast
           [`(inject ,e ,t)

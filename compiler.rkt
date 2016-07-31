@@ -77,7 +77,7 @@
 
       (match ast
         [`(program ,(and fun-defs
-                   `(define (,fun-names [,vars : ,arg-types] ...) : ,ret-types ,fbody))  ... ,body)
+                         `(define (,fun-names [,vars : ,arg-types] ...) : ,ret-types ,fbody))  ... ,body)
          
          (define types (map (lambda (func-arg-types ret-type)
                               `(,@func-arg-types -> ,ret-type))
@@ -87,10 +87,8 @@
                                (type-check-add-f-env init fname type))
                              (hash) fun-names types))
          (define env* (hash))
-         (let-values ([(fun-defs-e fun-types) (map2 (lambda (def) ((type-check env* fenv*) def))
-                                                    fun-defs)]
-                      [(body-e body-type) ((type-check env* fenv*) body)])
-           `(program (type ,body-type) ,@fun-defs-e ,body-e))]
+         (let-values ([(body-e body-type) ((type-check env* fenv*) body)])
+           `(program (type ,body-type) ,@(map (lambda (def) ((type-check env* fenv*) def)) fun-defs) ,body-e))]
         
         ['(read) (values `(has-type (read) Integer) 'Integer)]
         [(? fixnum?) (values `(has-type ,ast Integer) 'Integer)]
@@ -106,13 +104,8 @@
                     (unless (not (null? f-type))
                       (error (format "undefined variable ~a " ast)))
                     (values `(has-type ,ast ,f-type) f-type))]))]
-           
-        
-        
-         
-        ; compare operations
 
-        
+        ; compare operations
         [`(,logic-op ,e1 ,e2)
          #:when (set-member? logic-instructions logic-op)
          (define-values (e1* e1-ty) (recur e1))
@@ -253,9 +246,7 @@
            (error (format "body type: ~a and return type: ~a mismatch for function ~a\n current env: ~a \n current fenv: ~a"
                           body-type ret-type fun-name env fenv)))
          (define args (map (lambda (var type) `(,var : ,type)) vars types))
-         (values `(has-type (define (,fun-name ,@args) : ,ret-type ,body-e)
-                            ,ret-type)
-                 ret-type)]
+         `(define (,fun-name ,@args) : ,ret-type ,body-e)]
         
         [`(,fun-name ,pargs ...) 
          #:when (not (set-member? primitive-set fun-name))
@@ -284,6 +275,7 @@
   (lambda (env)
     (lambda (e)
       (define recur (uniquify env))
+      
       (match e
         [`(has-type ,es ,t) `(has-type ,(recur es) ,t)]
         [(? symbol?) (cdr (assq e env))]
@@ -300,8 +292,8 @@
               ,((uniquify (cons `(,x . ,new-x) env)) body)))]
         
         ; main program
-        [`(program (type ,t) ,(and fun-defs `(has-type (define (,fun-names ,args ...) : ,ret ,fbody) ,ts)) ... ,e)
-         (define f-temps (map (lambda (f) (cons f (gensym 'function.))) fun-names))
+        [`(program (type ,t) ,(and fun-defs `(define (,fun-names ,args ...) : ,ret ,fbody)) ... ,e)
+         (define f-temps (map (lambda (f) (cons f (gensym f))) fun-names))
          (define new-env
            (foldl (lambda (f-temp env)
                     (cons f-temp env))
@@ -310,7 +302,7 @@
                    ,((uniquify new-env) e))]
         
         [`(define (,fun-name (,vars : ,types) ...) : ,ret-type ,fbody)
-         (define var-temps (map (lambda (var) (gensym 'arg.)) vars))
+         (define var-temps (map (lambda (var) (gensym var)) vars))
          (define new-env
            (foldl (lambda (var new-temp env)
                     (cons `(,var . ,new-temp) env))
@@ -331,7 +323,7 @@
     (match e
       [`(program (type ,t) ,fun-defs ... ,body)
        `(program (type ,t) ,@(map reveal-functions fun-defs) ,(reveal-functions body))]
-            [(? symbol?) e]
+      [(? symbol?) e]
       [(? integer?) e]
       [(? boolean?) e]
       [`(void) e]
@@ -340,7 +332,7 @@
            `(has-type (function-ref ,s) ,t)
            e)]
       [`(has-type ,e ,t) `(has-type ,(reveal-functions e) ,t)]
-            [`(if ,(app reveal-functions cnd) 
+      [`(if ,(app reveal-functions cnd) 
             ,(app reveal-functions thn)
             ,(app reveal-functions els))
        `(if ,cnd ,thn ,els)]
@@ -367,11 +359,11 @@
     (match e
       [`(program (type ,ty) ,fun-defs ... ,body)
        `(program (type ,ty) ,@(map expose-allocation fun-defs)  ,(expose-allocation body))]
+      [`(function-ref ,name) e]
       [`(define (,fun-name ,args ...) : ,ret-type ,fbody)
        `(define (,fun-name ,@args) : ,ret-type ,(expose-allocation fbody))]
-      [`(app ,fname ,es ...)
-       `(app ,(expose-allocation fname) ,@(map expose-allocation es))]
-      [`(function-ref ,name) e]
+      [`(app ,es ...)
+       `(app ,@(map expose-allocation es))]      
       [`(has-type (vector ,(app expose-allocation e*) ...) ,vec-type)
        (define len (length e*))
        (define size (* 8 (+ len 1)))
@@ -1135,11 +1127,10 @@
     )))
 
 
- #;(run 
+#;(run 
   '(program
-    (define (id [f : (Integer -> Integer)]) : (Integer -> Integer) f)
-    (define (inc [x : Integer]) : Integer (+ x 1))
-    ((id inc) 41)
+     (define (id [x : Integer]) : Integer x)
+     (id 42)
     
     )
 )
@@ -1151,8 +1142,8 @@
   
     (list
      `("uniquify"                ,(uniquify '())                                   ,interp-scheme)
-;     `("reveal-functions"        ,reveal-functions                                 ,interp-F)
-;     `("expose allocation"       ,expose-allocation                                ,interp-scheme)
+     `("reveal-functions"        ,reveal-functions                                 ,interp-F)
+     `("expose allocation"       ,expose-allocation                                ,interp-F)
 
      ; `("flatten"               ,(flatten #t)                                     ,interp-C)
      ; `("instruction selection" ,select-instructions                              ,interp-x86)
