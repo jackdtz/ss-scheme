@@ -7,6 +7,9 @@
 
 (provide (all-defined-out))
 
+(define para-registers
+  (list 'rdi 'rsi 'rdx 'rcx 'r8 'r9))
+
 (define cmp-instructions
   (set 'eq? '< '<= '> '>=))
 
@@ -585,7 +588,91 @@
       [`(reg ,r) e]
       [`(return ,e) (select-instructions `(assign (reg rax) ,e))]
 
-      ; vector
+      ; -------------------------------------- function --------------------------------------
+
+      [`(assign ,lhs (function-ref ,fun-name))
+       `((leaq (function-ref ,fun-name) ,(select-instructions lhs)))]
+
+      ; function definition
+      [`(define (,fun-name (,args : ,types) ...) : ,ret (,vars ...) ,stms ...) 
+       (define move-from-reg-func (lambda (reg arg) `(movq (reg ,reg) (var ,arg))))
+       (define move-from-regs-instrs
+         (if (<= (length args) 6)
+             (map move-from-reg-func
+                  (take para-registers (length args))
+                  args)
+             (map move-from-reg-func para-registers (take args 6))))
+
+       (define move-from-stk-func (lambda (offset arg) `(movq (deref rbp ,offset) (var ,arg))))
+       (define move-from-stks-instrs
+         (if (<= (length args) 6)
+             '()
+             (map move-from-stk-func
+                  (range 16 (* 8 (+ 2 (- (length args) 6))) 8)
+                  (take-right args (- (length args) 6)))))
+       
+       (define all-func-calls 
+         (filter (lambda (stm)
+                   (match stm
+                     [`(assign ,lhs (app ,f ,es ...)) #t]
+                     [else #f]))
+                 stms))
+
+       (define max-num-stk-args
+         (let ([lst
+                (map (lambda (stm)
+                       (match stm
+                         [`(assign ,lhs (app ,f ,es ...))
+                          (if (<= (length es) 6)
+                              0
+                              (- (length es) 6))]
+                         [else
+                          (error "max-stk-args could not match " stm)]))
+                     all-func-calls)])
+         (if (null? lst) 0 (apply max lst))))
+
+       (define instrs
+         `(,@move-from-regs-instrs
+           ,@move-from-stks-instrs
+           ,@(append* (map select-instructions stms))
+           )
+         )
+
+       (define args-locals
+         (map (lambda (arg type) (cons arg type)) args types))
+       
+       `(define (,fun-name) ,(length args)
+          (,(append vars args-locals) ,max-num-stk-args)
+          ,@instrs)]
+                                 
+      ; function application
+      [`(assign ,lhs (app ,fun-name ,es ...))
+
+       (define move-to-reg-func (lambda (arg reg) `(movq ,arg (reg ,reg))))
+       (define move-to-regs
+         (if (<= (length es) 6)
+             (map move-to-reg-func
+                  (map select-instructions es)
+                  (take para-registers (length es)))
+             (map move-to-reg-func
+                  (map select-instructions (take es 6))
+                  para-registers)))
+
+       (define move-to-stk-func (lambda (arg offset) `(movq ,arg (stack-arg ,offset))))
+       (define move-to-stks
+         (if (<= (length es) 6)
+             '()
+             (let ([num-of-stk-needed (- (length es) 6)])
+               (map move-to-stk-func
+                    (map select-instructions (take-right es num-of-stk-needed))
+                    (range 0 (* 8 num-of-stk-needed) 8)))))
+
+       `(,@move-to-regs
+         ,@move-to-stks
+         (indirect-callq (var ,fun-name))
+         (movq (reg rax) ,(select-instructions lhs)))]
+                   
+      ; -------------------------------------- vector -------------------------------------- 
       [`(void) `(int 0)]
       [`(collect ,size)
        `((movq (reg ,rootstack-reg) (reg rdi))
@@ -673,9 +760,12 @@
        `((if ,(select-instructions cnd)
             ,(append* (map select-instructions thn))
             ,(append* (map select-instructions els))))]
-      [`(program (,vars ...) (type ,t) ,stms ...)
-       (let ([new-stms (map (lambda (s) (select-instructions s)) stms)])
-         `(program ,vars (type ,t) ,@(append* new-stms)))]
+
+      ; ---------------------------- main -------------------------------
+      [`(program (,vars ...) (type ,t) (defines ,fun-defs ...) ,stms ...)
+       (let ([fun-def-stms (map select-instructions fun-defs)]
+             [new-stms (map select-instructions stms)])
+         `(program ,vars (type ,t) (defines ,@fun-def-stms) ,@(append* new-stms)))]
       [else (error "R0/instruction selection, unmatch " e)])))
 
 
@@ -1119,7 +1209,7 @@
            [revealed (reveal-functions uniq)]
            [expo (expose-allocation revealed)]
            [flat ((flatten #t) expo)]
-           ; [instrs (select-instructions flat)]
+           [instrs (select-instructions flat)]
            ; [liveness ((uncover-live (void)) instrs)]
            ; [graph ((build-interference (void) (void) (void)) liveness)]
            ; [allocs (allocate-registers graph)]
@@ -1132,7 +1222,7 @@
      (log revealed)
      (log expo)  
      (log flat)
-      ; (log instrs)
+     (log instrs)
       ; (log liveness)
       ; (log graph)
       ; (log allocs)
@@ -1144,8 +1234,11 @@
 
 #;(run 
   '(program
-     (define (id [x : Integer]) : Integer x)
-     (id 42)
+    (define (fun [x1 : Integer] [x2 : Integer] [x3 : Integer] [x4 : Integer]
+                 [x5 : Integer] [x6 : Integer] [x7 : Integer] [x8 : Integer])
+      : Integer (+ x1 (+ x2 (+ x3 (+ x4 (+ x5 (+ x6 (+ x7 x8))))))))
+    (fun 5 5 5 5
+         5 5 5 7)
     
     )
 )
@@ -1160,7 +1253,7 @@
      `("reveal-functions"        ,reveal-functions                                 ,interp-F)
      `("expose allocation"       ,expose-allocation                                ,interp-F)
      `("flatten"                 ,(flatten #f)                                     ,interp-C)
-     ; `("instruction selection" ,select-instructions                              ,interp-x86)
+     `("instruction selection" ,select-instructions                              ,interp-x86)
      ; `("liveness analysis"     ,(uncover-live (void))                            ,interp-x86)
      ; `("build interference"    ,(build-interference (void) (void) (void))        ,interp-x86)
      ; `("allocate register"     ,allocate-registers                               ,interp-x86) 
