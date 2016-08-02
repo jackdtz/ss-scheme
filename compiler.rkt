@@ -783,8 +783,10 @@
       [`(var ,x) (set x)]
       [`(reg ,r) (set r)]
       [`(int ,i) (set)]
+      [`(stack-arg ,offset) (set)]
+      [`(function-ref ,f) (set)]
       [`(global-value ,name) (set)]
-      [`(deref r11 ,s) (set)]
+      [`(deref ,reg ,offset) (set reg)]
       [`(byte-reg ,r) (set (byte-reg->full-reg r))]
       [else (error "free-var: unhandled case " e)])))
 
@@ -797,6 +799,8 @@
       [`(callq ,f) caller-save]
       [`(set ,cc ,arg) (free-var arg)]
       [`(cmpq ,e1 ,e2) (set)]
+      [`(indirect-callq ,fname) caller-save]
+      [`(leaq ,from ,to) (free-var to)]
       [else (error "write-vars could not match " ast)])))
 
 (define read-vars
@@ -809,6 +813,8 @@
       [`(negq ,x) (free-var x)]
       [`(set ,cc ,arg) (set)]
       [`(callq ,f) caller-save]
+      [`(leaq ,from ,to) (free-var from)]
+      [`(indirect-callq ,fname) (free-var fname)]
       [`(andq ,e1 ,e2) (set-union (free-var e1) (free-var e2))]
       [else
        (error "read-vars could not match " ast)])))
@@ -836,9 +842,10 @@
   (lambda (live-after) 
    (lambda (e)
     (match e
-     [`(program ,vars (type ,t) ,instrs ...)
+     [`(program ,vars (type ,t) (defines ,fun-defs ...) ,instrs ...)
       (let-values ([(new-instrs new-live-after) ((liveness (set)) instrs #f)])
-        `(program (,vars ,(cdr new-live-after)) (type ,t) ,@new-instrs))]
+        (define new-fun-defs (map (uncover-live live-after) fun-defs))
+        `(program (,vars ,(cdr new-live-after)) (type ,t) (defines ,@new-fun-defs) ,@new-instrs))]
       [`(if (,cmp-op ,e1 ,e2) ,thn ,els)
        (let-values ([(new-thn thns-before) ((liveness live-after) thn #t)]
                     [(new-els elss-before) ((liveness live-after) els #t)])
@@ -847,7 +854,10 @@
                  (set-union (apply set-union thns-before)
                             (apply set-union elss-before)
                             (free-var e1)
-                            (free-var e2))))]                            
+                            (free-var e2))))]
+      [`(define (,fname) ,num-params (,vars-types ... ,max-stack) ,instrs ...)
+       (define-values (new-instrs new-live-after) ((liveness (set)) instrs #f))
+       `(define (,fname) ,num-params ((,@vars-types ,max-stack) ,new-live-after) ,@new-instrs)]                            
       [else
        (values e (set-union (set-subtract live-after
                                           (write-vars e))
@@ -863,14 +873,25 @@
     (lambda (ast)
       (match ast
         
-       [`(program (,vars ,lives) (type ,t) ,instrs ...)
+       [`(program (,vars ,lives) (type ,t) (defines ,fun-defs ...) ,instrs ...)
+        
+        (define new-fun-defs (map (build-interference live-after graph mgraph) fun-defs))
         (let* ([vars* (map (lambda (var) (car var)) vars)]
                [graph (make-graph vars*)]
                [mgraph (make-graph vars*)])
           (let ([new-instrs
                  (for/list ([inst instrs] [live-after lives])
                            ((build-interference live-after graph mgraph) inst))])
-            `(program (,vars ,graph ,mgraph) (type ,t) ,@new-instrs)))]
+            `(program (,vars ,graph ,mgraph) (type ,t) (defines ,@new-fun-defs) ,@new-instrs)))]
+       
+       [`(define (,fname) ,num-params ((,vars-types ... ,max-stack) ,lives) ,instrs ...)
+        (let* ([vars* (map (lambda (var-type) (car var-type)) vars-types)]
+               [graph (make-graph vars*)]
+               [mgraph (make-graph vars*)])
+          (let ([new-instrs
+                 (for/list ([inst instrs] [live-after lives])
+                           ((build-interference live-after graph mgraph) inst))])
+            `(define (,fname) ,num-params ((,vars-types ,max-stack) ,graph ,mgraph) ,@new-instrs)))]
         
         [(or `(movq ,src ,dst) `(movzbq ,src ,dst))
          (begin
@@ -1055,12 +1076,11 @@
 
 (define allocate-registers
   (lambda (ast)
-    (match ast
-      [`(program (,vars ,graph ,mgraph) (type ,t) ,instrs ...)
-
-       (let* ([annot-graph (annotate graph)]
-              [color-map ((color-graph annot-graph mgraph) 
-                          (map (lambda (var) (car var)) vars))])
+    
+    (define (helper vars-types graph mgraph)
+      (let* ([annot-graph (annotate graph)]
+             [color-map ((color-graph annot-graph mgraph)
+                         (map (lambda (var-type) (car var-type)) vars-types))])
         (let-values ([(reg-map stk-size) (reg-spill color-map)])
           (define root-size (* 8 
                                (length 
@@ -1068,8 +1088,23 @@
                                                    (match (cdr var-type)
                                                      [`(Vector ,ts ...) #t]
                                                      [else #f]))
-                                         vars))))
-          `(program (,stk-size ,root-size) (type ,t) ,@(map (assign-homes reg-map) instrs))))]
+                                         vars-types))))
+          (values root-size stk-size reg-map))))
+          
+    
+    (match ast
+      [`(program (,vars-types ,graph ,mgraph) (type ,t) (defines ,fun-defs ...) ,instrs ...)
+       (define-values (root-size stk-size reg-map) (helper vars-types graph mgraph))
+        `(program (,stk-size ,root-size) (type ,t) 
+                  (defines ,@(map allocate-registers fun-defs))
+                  ,@(map (assign-homes reg-map) instrs))))]
+      
+      [`(define (,fname) ,num-params ((,vars-types ... ,max-stack) ,new-live-after) ,new-instrs ...)
+       (define-values (root-size stk-size reg-map) (helper vars-types graph mgraph))
+       `(define (,fname) ,num-params (,root-size ,stk-size ,max-stack))
+       
+       
+       ]
       [else (error "allocate-registers could not match " ast)])))
                              
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -1210,7 +1245,7 @@
            [expo (expose-allocation revealed)]
            [flat ((flatten #t) expo)]
            [instrs (select-instructions flat)]
-           ; [liveness ((uncover-live (void)) instrs)]
+           [liveness ((uncover-live (void)) instrs)]
            ; [graph ((build-interference (void) (void) (void)) liveness)]
            ; [allocs (allocate-registers graph)]
            ; [lower-if (lower-conditionals allocs)]
@@ -1223,7 +1258,7 @@
      (log expo)  
      (log flat)
      (log instrs)
-      ; (log liveness)
+      (log liveness)
       ; (log graph)
       ; (log allocs)
       ; (log lower-if)
@@ -1232,20 +1267,21 @@
     )))
 
 
-#;(run 
+(run 
   '(program
-    (define (fun [x1 : Integer] [x2 : Integer] [x3 : Integer] [x4 : Integer]
-                 [x5 : Integer] [x6 : Integer] [x7 : Integer] [x8 : Integer])
-      : Integer (+ x1 (+ x2 (+ x3 (+ x4 (+ x5 (+ x6 (+ x7 x8))))))))
-    (fun 5 5 5 5
-         5 5 5 7)
+    (define (sum [x : Integer]) : Integer
+      (if (eq? x 1) 1 (+ x (sum (+ x (- 1))))))
+    
+    (if (eq? (sum 3) 6)
+        42
+        777)
     
     )
 )
 
 (define interp (new interp-R3))
 (define interp-F (send interp interp-F '()))
-       
+       ; 
 (define test-passes
   
     (list
@@ -1253,9 +1289,9 @@
      `("reveal-functions"        ,reveal-functions                                 ,interp-F)
      `("expose allocation"       ,expose-allocation                                ,interp-F)
      `("flatten"                 ,(flatten #f)                                     ,interp-C)
-     `("instruction selection" ,select-instructions                              ,interp-x86)
-     ; `("liveness analysis"     ,(uncover-live (void))                            ,interp-x86)
-     ; `("build interference"    ,(build-interference (void) (void) (void))        ,interp-x86)
+     `("instruction selection"   ,select-instructions                              ,interp-x86)
+     `("liveness analysis"       ,(uncover-live (void))                            ,interp-x86)
+     `("build interference"    ,(build-interference (void) (void) (void))          ,interp-x86)
      ; `("allocate register"     ,allocate-registers                               ,interp-x86) 
      ; ; `("lower-conditionals"    ,lower-conditionals                               ,interp-x86)
      ; `("patch-instructions"    ,patch-instructions                                ,interp-x86)
@@ -1282,10 +1318,10 @@
 
 
  
-(begin
-  (for ([test compiler-list])
-   (apply interp-tests test))
-  (pretty-display "all passed"))
+; (begin
+;   (for ([test compiler-list])
+;    (apply interp-tests test))
+;   (pretty-display "all passed"))
 
 
 
