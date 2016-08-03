@@ -269,8 +269,6 @@
             (values `(has-type (,fun-e ,@parg-e) ,ret-type) ret-type)]
            [else
             (error "function type error" ast)])]
-           
-           
         ))))
 
 
@@ -428,9 +426,7 @@
       
       [else
        (error "in expose-allocation, unmatched" e)])))
-
-                                
-
+                      
 (define flatten
   (lambda (need-temp)
     (lambda (e)
@@ -589,7 +585,6 @@
       [`(return ,e) (select-instructions `(assign (reg rax) ,e))]
 
       ; -------------------------------------- function --------------------------------------
-
       [`(assign ,lhs (function-ref ,fun-name))
        `((leaq (function-ref ,fun-name) ,(select-instructions lhs)))]
 
@@ -819,7 +814,6 @@
       [else
        (error "read-vars could not match " ast)])))
 
-
 (define liveness
  (lambda (origin-live-after)
   (lambda (old-instrs is-if?)
@@ -834,9 +828,7 @@
                       (cons new-live-after all-lives) 
                       (cons new-instr instrs-col)))])))
 
-    (if is-if?
-        (loop (reverse old-instrs) origin-live-after '() '())
-        (loop (reverse old-instrs) origin-live-after `(,origin-live-after) '())))))
+    (loop (reverse old-instrs) origin-live-after `(,origin-live-after) '()))))
 
 (define uncover-live
   (lambda (live-after) 
@@ -844,25 +836,23 @@
     (match e
      [`(program ,vars (type ,t) (defines ,fun-defs ...) ,instrs ...)
       (let-values ([(new-instrs new-live-after) ((liveness (set)) instrs #f)])
-        (define new-fun-defs (map (uncover-live live-after) fun-defs))
+        (define new-fun-defs (map (uncover-live (set)) fun-defs))
         `(program (,vars ,(cdr new-live-after)) (type ,t) (defines ,@new-fun-defs) ,@new-instrs))]
       [`(if (,cmp-op ,e1 ,e2) ,thn ,els)
        (let-values ([(new-thn thns-before) ((liveness live-after) thn #t)]
-                    [(new-els elss-before) ((liveness live-after) els #t)])
-
-         (values `(if (,cmp-op ,e1 ,e2) ,new-thn ,thns-before ,new-els ,elss-before)
-                 (set-union (apply set-union thns-before)
-                            (apply set-union elss-before)
+                    [(new-els elss-before) ((liveness live-after) els #t)]) 
+         (values `(if (,cmp-op ,e1 ,e2) ,new-thn ,(cdr thns-before) ,new-els ,(cdr elss-before))
+                 (set-union (car thns-before)
+                            (car elss-before)
                             (free-var e1)
                             (free-var e2))))]
-      [`(define (,fname) ,num-params (,vars-types ... ,max-stack) ,instrs ...)
+      [`(define (,fname) ,num-params (,vars-types ,max-stack) ,instrs ...)
        (define-values (new-instrs new-live-after) ((liveness (set)) instrs #f))
-       `(define (,fname) ,num-params ((,@vars-types ,max-stack) ,new-live-after) ,@new-instrs)]                            
+       `(define (,fname) ,num-params ((,vars-types ,max-stack) ,(cdr new-live-after)) ,@new-instrs)]                            
       [else
        (values e (set-union (set-subtract live-after
                                           (write-vars e))
                             (read-vars e)))]))))
-
 
 (define build-interference
   (lambda (live-after graph mgraph)
@@ -919,7 +909,6 @@
                 (for ([d (write-vars ast)] #:when (not (equal? v d)))
                      (add-edge graph v d)))
            ast)]))))
-
 
 ; add saturation for each node
 (define annotate
@@ -1021,7 +1010,6 @@
               
               (loop node-heap map-col)))))))
                          
-
 (define reg-spill
   (lambda (color-map)
     (let* ([word-size 8]
@@ -1042,8 +1030,7 @@
                                          (+ 1 (- (cdr col-map) reg-len)))))])))
          (hash->list color-map)))
        (align (* word-size number-of-spill) 16)))))
-    
-    
+        
 (define assign-homes
   (lambda (reg-map)
     (lambda (e)
@@ -1073,10 +1060,8 @@
               ,(map recur els))]
         [else (error "assign-homes could not match " e)]))))      
 
-
 (define allocate-registers
-  (lambda (ast)
-    
+  (lambda (ast)  
     (define (helper vars-types graph mgraph)
       (let* ([annot-graph (annotate graph)]
              [color-map ((color-graph annot-graph mgraph)
@@ -1089,27 +1074,20 @@
                                                      [`(Vector ,ts ...) #t]
                                                      [else #f]))
                                          vars-types))))
-          (values root-size stk-size reg-map))))
-          
-    
+          (values root-size stk-size reg-map))))     
     (match ast
       [`(program (,vars-types ,graph ,mgraph) (type ,t) (defines ,fun-defs ...) ,instrs ...)
        (define-values (root-size stk-size reg-map) (helper vars-types graph mgraph))
-        `(program (,stk-size ,root-size) (type ,t) 
-                  (defines ,@(map allocate-registers fun-defs))
-                  ,@(map (assign-homes reg-map) instrs))))]
+       `(program (,stk-size ,root-size) (type ,t) 
+                 (defines ,@(map allocate-registers fun-defs))
+                 ,@(map (assign-homes reg-map) instrs))]
       
-      [`(define (,fname) ,num-params ((,vars-types ... ,max-stack) ,new-live-after) ,new-instrs ...)
-       (define-values (root-size stk-size reg-map) (helper vars-types graph mgraph))
-       `(define (,fname) ,num-params (,root-size ,stk-size ,max-stack))
-       
-       
-       ]
+      ; [`(define (,fname) ,num-params ((,vars-types ... ,max-stack) ,new-live-after) ,new-instrs ...)
+      ;  (define-values (root-size stk-size reg-map) (helper vars-types graph mgraph))
+      ;  `(define (,fname) ,num-params (,root-size ,stk-size ,max-stack))
+      ;  ]
       [else (error "allocate-registers could not match " ast)])))
                              
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-
 (define lower-conditionals
   (lambda (ast)
     (match ast
@@ -1158,8 +1136,7 @@
             `((movq ,src (reg rax)) (,instr (reg rax) ,dst))]
            [else `((,instr ,src ,dst))])]
     [else `(,e)])))
-  
-  
+   
 (define print-x86
   (lambda (e)
     (match e
@@ -1229,15 +1206,12 @@
       
       [else (error "print-x86 unmatched " e)])))
 
-
 (define run
-  (lambda (e)
-    
+  (lambda (e)    
     (define log
       (lambda (e)
         (pretty-display e)
-        (newline)))
-    
+        (newline)))    
    (let* (
            [checked ((type-check '() '()) e)]
            [uniq ((uniquify '()) checked)]           
@@ -1246,7 +1220,7 @@
            [flat ((flatten #t) expo)]
            [instrs (select-instructions flat)]
            [liveness ((uncover-live (void)) instrs)]
-           ; [graph ((build-interference (void) (void) (void)) liveness)]
+           ;[graph ((build-interference (void) (void) (void)) liveness)]
            ; [allocs (allocate-registers graph)]
            ; [lower-if (lower-conditionals allocs)]
            ; [patched (patch-instructions lower-if)]
@@ -1258,14 +1232,15 @@
      (log expo)  
      (log flat)
      (log instrs)
-      (log liveness)
-      ; (log graph)
-      ; (log allocs)
-      ; (log lower-if)
-      ; (log patched)
+     (log liveness)
+     ;(log graph)
+     ; (log allocs)
+     ; (log lower-if)
+     ; (log patched)
       ; (log x86)
+     
+  
     )))
-
 
 (run 
   '(program
@@ -1275,15 +1250,12 @@
     (if (eq? (sum 3) 6)
         42
         777)
-    
-    )
-)
+))
 
 (define interp (new interp-R3))
 (define interp-F (send interp interp-F '()))
-       ; 
+        
 (define test-passes
-  
     (list
      `("uniquify"                ,(uniquify '())                                   ,interp-scheme)
      `("reveal-functions"        ,reveal-functions                                 ,interp-F)
@@ -1314,21 +1286,8 @@
     
     ))
 
-
-
-
- 
 ; (begin
 ;   (for ([test compiler-list])
 ;    (apply interp-tests test))
 ;   (pretty-display "all passed"))
-
-
-
- 
-
-
-
-
-
 
