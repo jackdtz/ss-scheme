@@ -1113,8 +1113,10 @@
   (define in-memory?
    (lambda (x)
     (match x
-     [`(global-value ,name) #t]
-     [`(deref rbp ,n) #t]
+      [`(global-value ,name) #t]
+      [`(deref rbp ,n) #t]
+      [`(stack-arg ,offset) #t]
+      [`(function-ref ,name) #t]
      [else #f])))
 
   (match e
