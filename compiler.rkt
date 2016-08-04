@@ -536,7 +536,7 @@
          (define-values (args-es args-stms args-vars) (map3 (flatten #t) args))
          (define function-apply `(app ,fname-e ,@args-es))
          (match need-temp
-           [#f (values function-apply (append* fname-stms args-stms) (append fname-vars args-vars))]
+           [#f (values function-apply (append* fname-stms args-stms) (append* fname-vars args-vars))]
            [#t
             (define ret (gensym 'temp.))
             (values ret
@@ -545,7 +545,7 @@
         [`(define (,fun-name ,args ...) : ,ret ,fbody)
          (define-values (fbody-e fbody-stms fbody-vars) ((flatten #t) fbody))
          `(define (,fun-name ,@args) : ,ret ,fbody-vars ,@fbody-stms (return ,fbody-e))]
-        [`(program (type ,t) ,fun-defs ... ,e) 
+        [`(program (type ,t) ,fun-defs ... ,e)
          (let-values ([(e-exp e-stms e-vars) ((flatten #t) e)])
            (define fun-def-flat (map (lambda (def) ((flatten #t) def)) fun-defs))
            `(program ,e-vars (type ,t) (defines ,@fun-def-flat) ,@(append e-stms `((return ,e-exp)))))]        
@@ -800,13 +800,8 @@
       [else (error "R0/instruction selection, unmatch " e)])))
 
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;                                                      ;
-;                                                      ;
-;                 Register Allocation                  ;
-;                                                      ;
-;                                                      ;
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;; liveness analysis ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
 
 (define free-var
   (lambda (e)
@@ -900,7 +895,7 @@
       (match ast
         
        [`(program (,vars-types ,lives) (type ,t) (defines ,fun-defs ...) ,instrs ...)       
-        (define new-fun-defs (map (build-interference live-after graph mgraph) fun-defs))        
+        (define new-fun-defs (map (build-interference live-after graph mgraph) fun-defs))
         (let* ([vars* (map (lambda (var-type) (car var-type)) vars-types)]
                [graph (make-graph vars*)]
                [mgraph (make-graph vars*)])
@@ -944,6 +939,10 @@
                 (for ([d (write-vars ast)] #:when (not (equal? v d)))
                      (add-edge graph v d)))
            ast)]))))
+
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; register allocation ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ; add saturation for each node
 (define annotate
@@ -1128,6 +1127,11 @@
                                  16))
        `(define (,fname) ,num-params (,root-size ,stack-size) ,@(map (assign-homes reg-map) instrs))]
       [else (error "allocate-registers could not match " ast)])))
+
+
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; lower-conditionals ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
                              
 (define lower-conditionals
   (lambda (ast)
@@ -1276,10 +1280,10 @@
            [revealed ((reveal-functions (void)) uniq)]
            [expo (expose-allocation revealed)]
            [flat ((flatten #t) expo)]
-           [instrs (select-instructions flat)]
-           [liveness ((uncover-live (void)) instrs)]
-           [graph ((build-interference (void) (void) (void)) liveness)]
-           [allocs (allocate-registers graph)]
+           ;[instrs (select-instructions flat)]
+           ;[liveness ((uncover-live (void)) instrs)]
+           ;[graph ((build-interference (void) (void) (void)) liveness)]
+           ;[allocs (allocate-registers graph)]
            ; [lower-if (lower-conditionals allocs)]
            ; [patched (patch-instructions lower-if)]
            ; [x86 (print-x86 patched)]
@@ -1292,7 +1296,7 @@
      ;(log instrs)
      ;(log liveness)
      ;(log graph)
-     (log allocs)
+     ;(log allocs)
      ; (log lower-if)
      ; (log patched)
       ; (log x86)
@@ -1300,12 +1304,18 @@
       1 
     )))
 
-; (run 
-;   '(program
-;  (define (id [x : Integer]) : Integer x)
-;  (let ([f id])
-;    (f 42))
-; ))
+#;(run 
+   '(program
+  (define (minus [n : Integer] [m : Integer]) : Integer
+  (+ n (- m)))
+
+(define (zero [x : Integer]) : (Vector)
+  (if (eq? x 0)
+      (vector)
+      (zero (+ (vector-ref (vector x) 0) (- 1)))))
+
+(vector-ref (vector (zero 1) (zero 2) 42) 2)
+ ))
 
 (define interp (new interp-R3))
 (define interp-F (send interp interp-F '()))
