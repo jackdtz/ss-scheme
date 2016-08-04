@@ -28,7 +28,7 @@
        'vector-set!))
 
 (define instruction-set
-  (set 'addq 'negq 'movq 'subq 'movzbq 'cmpq 'xorq 'andq))
+  (set 'addq 'negq 'movq 'subq 'movzbq 'cmpq 'xorq 'andq 'leaq))
 
 (define prettify-fun-type
   (lambda (type)
@@ -863,25 +863,24 @@
     (lambda (ast)
       (match ast
         
-       [`(program (,vars ,lives) (type ,t) (defines ,fun-defs ...) ,instrs ...)
-        
-        (define new-fun-defs (map (build-interference live-after graph mgraph) fun-defs))
-        (let* ([vars* (map (lambda (var) (car var)) vars)]
-               [graph (make-graph vars*)]
-               [mgraph (make-graph vars*)])
-          (let ([new-instrs
-                 (for/list ([inst instrs] [live-after lives])
-                           ((build-interference live-after graph mgraph) inst))])
-            `(program (,vars ,graph ,mgraph) (type ,t) (defines ,@new-fun-defs) ,@new-instrs)))]
-       
-       [`(define (,fname) ,num-params ((,vars-types ... ,max-stack) ,lives) ,instrs ...)
+       [`(program (,vars-types ,lives) (type ,t) (defines ,fun-defs ...) ,instrs ...)       
+        (define new-fun-defs (map (build-interference live-after graph mgraph) fun-defs))        
         (let* ([vars* (map (lambda (var-type) (car var-type)) vars-types)]
                [graph (make-graph vars*)]
                [mgraph (make-graph vars*)])
           (let ([new-instrs
                  (for/list ([inst instrs] [live-after lives])
                            ((build-interference live-after graph mgraph) inst))])
-            `(define (,fname) ,num-params ((,vars-types ,max-stack) ,graph ,mgraph) ,@new-instrs)))]
+            `(program (,vars-types ,graph ,mgraph) (type ,t) (defines ,@new-fun-defs) ,@new-instrs)))]
+       
+       [`(define (,fname) ,num-params ((,vars-types ,max-stack) ,lives) ,instrs ...)
+        (let* ([vars* (map (lambda (var-type) (car var-type)) vars-types)]
+               [graph (make-graph vars*)]
+               [mgraph (make-graph vars*)])          
+          (let ([new-instrs
+                 (for/list ([inst instrs] [live-after lives])
+                           ((build-interference live-after graph mgraph) inst))])
+            `(define (,fname) ,num-params (,vars-types ,max-stack ,graph ,mgraph) ,@new-instrs)))]
         
         [(or `(movq ,src ,dst) `(movzbq ,src ,dst))
          (begin
@@ -1058,6 +1057,8 @@
          `(if ,(recur cnd)
               ,(map recur thn)
               ,(map recur els))]
+        [`(function-ref ,name) `(function-ref ,name)]
+        [`(indirect-callq ,f) `(indirect-callq ,(recur f))]
         [else (error "assign-homes could not match " e)]))))      
 
 (define allocate-registers
@@ -1077,15 +1078,18 @@
           (values root-size stk-size reg-map))))     
     (match ast
       [`(program (,vars-types ,graph ,mgraph) (type ,t) (defines ,fun-defs ...) ,instrs ...)
+       
        (define-values (root-size stk-size reg-map) (helper vars-types graph mgraph))
        `(program (,stk-size ,root-size) (type ,t) 
                  (defines ,@(map allocate-registers fun-defs))
                  ,@(map (assign-homes reg-map) instrs))]
       
-      ; [`(define (,fname) ,num-params ((,vars-types ... ,max-stack) ,new-live-after) ,new-instrs ...)
-      ;  (define-values (root-size stk-size reg-map) (helper vars-types graph mgraph))
-      ;  `(define (,fname) ,num-params (,root-size ,stk-size ,max-stack))
-      ;  ]
+      [`(define (,fname) ,num-params (,vars-types ,max-stack ,graph ,mgraph) ,instrs ...)
+       (define-values (root-size stk-size reg-map) (helper vars-types graph mgraph))
+       (define stack-size (align (+ (* stk-size 8)
+                                    (* max-stack 8))
+                                 16))
+       `(define (,fname) ,num-params (,root-size ,stack-size) ,@(map (assign-homes reg-map) instrs))]
       [else (error "allocate-registers could not match " ast)])))
                              
 (define lower-conditionals
@@ -1107,6 +1111,21 @@
       [else `(,ast)])))
 
         
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;; patch-instructions ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+; The purpose of this pass is to make sure that each instruction adheres to
+; the restrictions regarding which arguments can be memory references. For
+; most instructions, the rule is that at most one argument may be a memory
+; reference.
+
+; for example: 
+; (movq (deref rbp -8) (deref rbp -16))
+;             
+;  will become
+;
+;  (movq (deref rbp -8) (reg rax))
+;  (movq (reg rax) (deref rbp -16))
+
 (define patch-instructions
  (lambda (e)
 
@@ -1222,26 +1241,26 @@
            [flat ((flatten #t) expo)]
            [instrs (select-instructions flat)]
            [liveness ((uncover-live (void)) instrs)]
-           ;[graph ((build-interference (void) (void) (void)) liveness)]
-           ; [allocs (allocate-registers graph)]
+           [graph ((build-interference (void) (void) (void)) liveness)]
+           [allocs (allocate-registers graph)]
            ; [lower-if (lower-conditionals allocs)]
            ; [patched (patch-instructions lower-if)]
            ; [x86 (print-x86 patched)]
            )
-     (log checked)
-     (log uniq)
-     (log revealed)
-     (log expo)  
-     (log flat)
-     (log instrs)
-     (log liveness)
-     ;(log graph)
-     ; (log allocs)
+     ; (log checked)
+     ; (log uniq)
+     ; (log revealed)
+     ; (log expo)  
+     ; (log flat)
+     ; (log instrs)
+     ; (log liveness)
+     ; (log graph)
+     (log allocs)
      ; (log lower-if)
      ; (log patched)
       ; (log x86)
      
-  
+      1 
     )))
 
 (run 
@@ -1292,4 +1311,3 @@
 ;   (for ([test compiler-list])
 ;    (apply interp-tests test))
 ;   (pretty-display "all passed"))
-
