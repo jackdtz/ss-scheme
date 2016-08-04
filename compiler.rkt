@@ -7,6 +7,11 @@
 
 (provide (all-defined-out))
 
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; utilities for the whole compiler
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
 (define para-registers
   (list 'rdi 'rsi 'rdx 'rcx 'r8 'r9))
 
@@ -36,12 +41,19 @@
         type
         `(,@(car type) -> ,(cdr type)))))
   
-
+(define member-of? hash-has-key?)
+  
 (define look-up
   (lambda (env key)
     (if (hash-has-key? env key)
         (hash-ref env key)
         (error "no value found for key" env key))))
+
+(define add-env
+  (lambda (env key val)
+    (if (hash-has-key? env key)
+        (error "duplicate key in env" key env)
+        (hash-set env key val))))
 
 (define type-check-lookup
   (lambda (env key)
@@ -72,6 +84,14 @@
 (define type-boolean? (lambda (x) (equal? x 'Boolean)))
 (define same-type? (lambda (x y) (equal? x y)))
 
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;; type-check ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+; this pass checks if there is any type error in the program.
+; it also annotate each node with it's type information
+;
+; 3           -------> (has-type 3 Integer)
+; (and #t #f) -------> (has-type (and (has-type #t Boolean) (has-type #f Boolean)) Boolean)
 
 (define type-check
   (lambda (env fenv)
@@ -272,6 +292,15 @@
         ))))
 
 
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;; uniquify ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+; this pass make sure that each let, function name, function parameter 
+; uses a unique variable name
+
+; (let ([x 3])              (let ([x.1 3])
+;   (+ x 1))        =>        (+ x.1 1))
+
 (define uniquify
   (lambda (env)
     (lambda (e)
@@ -320,44 +349,47 @@
 
 
 (define reveal-functions
-  (lambda (e)
-    (match e
-      [`(program (type ,t) ,fun-defs ... ,body)
-       `(program (type ,t) ,@(map reveal-functions fun-defs) ,(reveal-functions body))]
-      [(? symbol?) e]
-      [(? integer?) e]
-      [(? boolean?) e]
-      [`(void) e]
-      [`(has-type ,(? symbol? s) ,t)
-       (if (is-function? t)
-           `(has-type (function-ref ,s) ,t)
-           e)]
-      [`(has-type ,e ,t) `(has-type ,(reveal-functions e) ,t)]
-      [`(if ,(app reveal-functions cnd) 
-            ,(app reveal-functions thn)
-            ,(app reveal-functions els))
-       `(if ,cnd ,thn ,els)]
-      [`(and ,(app reveal-functions e1)
-             ,(app reveal-functions e2))
-       `(and ,e1 ,e2)]
-      [`(,op ,es ...) #:when (or (set-member? vec-primitive-set op)
-                                 (set-member? primitive-set op))
-                      (define new-es (map reveal-functions es))
-                      `(,op ,@new-es)]
-      [`(,(and fname `(has-type ,e ,t)) ,es ...)
-       `(app ,(reveal-functions fname) ,@(map reveal-functions es))]
-      [`(let ([,x ,(app reveal-functions rhs)]) 
-          ,(app reveal-functions body))
-       `(let ([,x ,rhs]) ,body)]
-      [`(define (,fun-name ,args ...) : ,ret-type ,fbody)
-       `(define (,fun-name ,@args) : ,ret-type ,(reveal-functions fbody))]
-      [else
-       (error "in reveal-functions, unmatched" e)])))
-
+  (lambda (funs)
+    (lambda (e)
+      (define recur (reveal-functions funs))
+      (match e
+        [`(program (type ,t) ,(and fun-defs `(define (,fun-names ,args ...) : ,rets ,fbody)) ... ,body)
+         (define all-fun-types (map (lambda (fun-name ret-type) (cons fun-name ret-type)) fun-names rets))
+         (define fun-env (foldl (lambda (fun-type init)
+                                  (add-env init (car fun-type) (cdr fun-type)))
+                                (hash) all-fun-types))
+         `(program (type ,t) ,@(map (reveal-functions fun-env)  fun-defs) ,((reveal-functions fun-env) body))]
+        [(? symbol?) (if (member-of? funs e) `(function-ref ,e) e)]
+        [(? integer?) e]
+        [(? boolean?) e]
+        [`(void) e]
+        [`(has-type ,e ,t) `(has-type ,(recur e) ,t)]
+        [`(if ,(app recur cnd) 
+              ,(app recur thn)
+              ,(app recur els))
+         `(if ,cnd ,thn ,els)]
+        [`(and ,(app recur e1)
+               ,(app recur e2))
+         `(and ,e1 ,e2)]
+        [`(,op ,es ...) #:when (or (set-member? vec-primitive-set op)
+                                   (set-member? primitive-set op))
+                        (define new-es (map recur es))
+                        `(,op ,@new-es)]
+        [`(,(and fname `(has-type ,e ,t)) ,es ...)
+         `(app ,(recur fname) ,@(map recur es))]
+        [`(let ([,x ,(app recur rhs)]) 
+            ,(app recur body))
+         `(let ([,x ,rhs]) ,body)]
+        [`(define (,fun-name ,args ...) : ,ret-type ,fbody)
+         `(define (,fun-name ,@args) : ,ret-type ,(recur fbody))]
+        [else
+         (error "in reveal-functions, unmatched" e)]))))
+  
 
 (define expose-allocation
   (lambda (e)
     (match e
+
       [`(program (type ,ty) ,fun-defs ... ,body)
        `(program (type ,ty) ,@(map expose-allocation fun-defs)  ,(expose-allocation body))]
       [`(function-ref ,name) e]
@@ -502,10 +534,14 @@
         [`(has-type (app ,fname ,args ...) ,ty)
          (define-values (fname-e fname-stms fname-vars) ((flatten #t) fname))
          (define-values (args-es args-stms args-vars) (map3 (flatten #t) args))
-         (define ret (gensym 'temp.))
-         (values ret
-                 `(,@(append* fname-stms args-stms) (assign ,ret (app ,fname-e ,@args-es)))
-                 (cons `(,ret . ,ty) (append* fname-vars args-vars)))]
+         (define function-apply `(app ,fname-e ,@args-es))
+         (match need-temp
+           [#f (values function-apply (append* fname-stms args-stms) (append fname-vars args-vars))]
+           [#t
+            (define ret (gensym 'temp.))
+            (values ret
+                    `(,@(append* fname-stms args-stms) (assign ,ret (app ,fname-e ,@args-es)))
+                    (cons `(,ret . ,ty) (append* fname-vars args-vars)))])]
         [`(define (,fun-name ,args ...) : ,ret ,fbody)
          (define-values (fbody-e fbody-stms fbody-vars) ((flatten #t) fbody))
          `(define (,fun-name ,@args) : ,ret ,fbody-vars ,@fbody-stms (return ,fbody-e))]
@@ -1036,7 +1072,8 @@
       (define recur (assign-homes reg-map))
       (match e
         [`(global-value ,name) e]
-        [`(deref r11 ,s) e]
+        [`(deref ,reg ,s) e]
+        [`(stack-arg ,offset) e]
         [`(var ,x) (look-up reg-map x)]
         [`(int ,i) `(int ,i)]
         [`(reg ,r) `(reg ,r)]
@@ -1236,7 +1273,7 @@
    (let* (
            [checked ((type-check '() '()) e)]
            [uniq ((uniquify '()) checked)]           
-           [revealed (reveal-functions uniq)]
+           [revealed ((reveal-functions (void)) uniq)]
            [expo (expose-allocation revealed)]
            [flat ((flatten #t) expo)]
            [instrs (select-instructions flat)]
@@ -1247,14 +1284,14 @@
            ; [patched (patch-instructions lower-if)]
            ; [x86 (print-x86 patched)]
            )
-     ; (log checked)
-     ; (log uniq)
-     ; (log revealed)
-     ; (log expo)  
-     ; (log flat)
-     ; (log instrs)
-     ; (log liveness)
-     ; (log graph)
+     (log checked)
+     (log uniq)
+     (log revealed)
+     (log expo)  
+     (log flat)
+     ;(log instrs)
+     ;(log liveness)
+     ;(log graph)
      (log allocs)
      ; (log lower-if)
      ; (log patched)
@@ -1263,15 +1300,12 @@
       1 
     )))
 
-(run 
-  '(program
-    (define (sum [x : Integer]) : Integer
-      (if (eq? x 1) 1 (+ x (sum (+ x (- 1))))))
-    
-    (if (eq? (sum 3) 6)
-        42
-        777)
-))
+; (run 
+;   '(program
+;  (define (id [x : Integer]) : Integer x)
+;  (let ([f id])
+;    (f 42))
+; ))
 
 (define interp (new interp-R3))
 (define interp-F (send interp interp-F '()))
@@ -1279,13 +1313,13 @@
 (define test-passes
     (list
      `("uniquify"                ,(uniquify '())                                   ,interp-scheme)
-     `("reveal-functions"        ,reveal-functions                                 ,interp-F)
+     `("reveal-functions"        ,(reveal-functions '())                           ,interp-F)
      `("expose allocation"       ,expose-allocation                                ,interp-F)
      `("flatten"                 ,(flatten #f)                                     ,interp-C)
      `("instruction selection"   ,select-instructions                              ,interp-x86)
      `("liveness analysis"       ,(uncover-live (void))                            ,interp-x86)
      `("build interference"    ,(build-interference (void) (void) (void))          ,interp-x86)
-     ; `("allocate register"     ,allocate-registers                               ,interp-x86) 
+     ; `("allocate register"     ,allocate-registers                                 ,interp-x86) 
      ; ; `("lower-conditionals"    ,lower-conditionals                               ,interp-x86)
      ; `("patch-instructions"    ,patch-instructions                                ,interp-x86)
      ; `("x86"                   ,print-x86                                          #f)
@@ -1307,7 +1341,7 @@
     
     ))
 
-; (begin
-;   (for ([test compiler-list])
-;    (apply interp-tests test))
-;   (pretty-display "all passed"))
+(begin
+  (for ([test compiler-list])
+   (apply interp-tests test))
+  (pretty-display "all passed"))
