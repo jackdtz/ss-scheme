@@ -902,12 +902,12 @@
           (let ([new-instrs
                  (for/list ([inst instrs] [live-after lives])
                            ((build-interference live-after graph mgraph) inst))])
-            (pretty-display ast)
-            (newline)
-            (pretty-display graph)
-            (newline)
-            (pretty-display mgraph)
-            (newline)
+            ; (pretty-display ast)
+            ; (newline)
+            ; (pretty-display graph)
+            ; (newline)
+            ; (pretty-display mgraph)
+            ; (newline)
             `(program (,vars-types ,graph ,mgraph) (type ,t) (defines ,@new-fun-defs) ,@new-instrs)))]
        
        [`(define (,fname) ,num-params ((,vars-types ,max-stack) ,lives) ,instrs ...)
@@ -956,10 +956,11 @@
     (hash-for-each
      graph              
      (lambda (var adj-nodes)
-       (let ([pre-saturated (list->set
-                             (map (lambda (reg) (register->color reg))
-                                  (filter (lambda (var) (set-member? registers var)) (set->list adj-nodes))))])
-       (hash-set! graph var `(,adj-nodes ,pre-saturated)))))
+       (define all-regs (filter (lambda (var) (set-member? registers var)) (set->list adj-nodes)))
+       (define all-reg-colors (map (lambda (reg) (register->color reg)) all-regs))
+       (define all-general-reg-color (filter (lambda (color) (>= color 0)) all-reg-colors))
+       (define pre-saturated (list->set all-general-reg-color))
+       (hash-set! graph var `(,adj-nodes ,pre-saturated))))
     graph))
 
 (define choose-color
@@ -1121,7 +1122,7 @@
       [`(program (,vars-types ,graph ,mgraph) (type ,t) (defines ,fun-defs ...) ,instrs ...)
        
        (define-values (root-size stk-size reg-map color-map) (helper vars-types graph mgraph))
-       (pretty-display color-map)
+       ; (pretty-display color-map)
        `(program (,stk-size ,root-size) (type ,t) 
                  (defines ,@(map allocate-registers fun-defs))
                  ,@(map (assign-homes reg-map) instrs))]
@@ -1302,7 +1303,7 @@
      ;(log instrs)
      ;(log liveness)
      ;(log graph)
-     ;(log allocs)
+     (log allocs)
      ; (log lower-if)
      ; (log patched)
       ; (log x86)
@@ -1310,18 +1311,18 @@
       1 
     )))
 
-(run 
-   '(program
-  (define (minus [n : Integer] [m : Integer]) : Integer
-  (+ n (- m)))
+; (run 
+;    '(program
+;   (define (minus [n : Integer] [m : Integer]) : Integer
+;   (+ n (- m)))
 
-(define (zero [x : Integer]) : (Vector)
-  (if (eq? x 0)
-      (vector)
-      (zero (+ (vector-ref (vector x) 0) (- 1)))))
+; (define (zero [x : Integer]) : (Vector)
+;   (if (eq? x 0)
+;       (vector)
+;       (zero (+ (vector-ref (vector x) 0) (- 1)))))
 
-(vector-ref (vector (zero 1) (zero 2) 42) 2)
- ))
+; (vector-ref (vector (zero 1) (zero 2) 42) 2)
+;  ))
 
 (define interp (new interp-R3))
 (define interp-F (send interp interp-F '()))
@@ -1357,7 +1358,7 @@
     
     ))
 
-; (begin
-;   (for ([test compiler-list])
-;    (apply interp-tests test))
-;   (pretty-display "all passed"))
+(begin
+   (for ([test compiler-list])
+    (apply interp-tests test))
+   (pretty-display "all passed"))
