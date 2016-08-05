@@ -902,12 +902,6 @@
           (let ([new-instrs
                  (for/list ([inst instrs] [live-after lives])
                            ((build-interference live-after graph mgraph) inst))])
-            ; (pretty-display ast)
-            ; (newline)
-            ; (pretty-display graph)
-            ; (newline)
-            ; (pretty-display mgraph)
-            ; (newline)
             `(program (,vars-types ,graph ,mgraph) (type ,t) (defines ,@new-fun-defs) ,@new-instrs)))]
        
        [`(define (,fname) ,num-params ((,vars-types ,max-stack) ,lives) ,instrs ...)
@@ -925,8 +919,8 @@
                 (for ([d (free-var dst)]
                       #:when (not (or (equal? d v) (equal? `(var ,v) src))))
                      (add-edge graph d v)))
-           (cond [(and (var? src) (var? dst)) (add-edge mgraph (get-var src)
-                                                               (get-var dst))])
+           ; (cond [(and (var? src) (var? dst)) (add-edge mgraph (get-var src)
+           ;                                                     (get-var dst))])
            ast)]  
         [`(callq ,label) 
          (begin 
@@ -1300,10 +1294,10 @@
      ; (log revealed)
      ; (log expo)  
      ; (log flat)
-     ;(log instrs)
+     ; (log instrs)
      ;(log liveness)
-     ;(log graph)
-     (log allocs)
+     (log graph)
+     ; (log allocs)
      ; (log lower-if)
      ; (log patched)
       ; (log x86)
@@ -1312,17 +1306,17 @@
     )))
 
 ; (run 
-;    '(program
-;   (define (minus [n : Integer] [m : Integer]) : Integer
-;   (+ n (- m)))
+;     '(program
 
-; (define (zero [x : Integer]) : (Vector)
-;   (if (eq? x 0)
-;       (vector)
-;       (zero (+ (vector-ref (vector x) 0) (- 1)))))
+; (define (id [x : Integer]) : Integer x)
 
-; (vector-ref (vector (zero 1) (zero 2) 42) 2)
-;  ))
+; (define (f [n : Integer] [clos : (Vector (Integer -> Integer) (Vector Integer))]) : Integer
+;   (if (eq? n 100)
+;       ((vector-ref clos 0) (vector-ref (vector-ref clos 1) 0))
+;       (f (+ n 1) (vector (vector-ref clos 0) (vector-ref clos 1)))))
+
+; (f 0 (vector id (vector 42)))
+;   ))
 
 (define interp (new interp-R3))
 (define interp-F (send interp interp-F '()))
@@ -1354,7 +1348,7 @@
 
 (define compiler-list
   ;; Name           Typechecker               Compiler-Passes      Initial interpreter   Test-name    Valid suites
-  `(("conditionals"  ,(type-check (void) (void))    ,test-passes          ,interp-scheme       "s3"         ,(cdr (assq 3 suite-list)))
+  `(("conditionals"  ,(type-check (void) (void))    ,test-passes          ,interp-scheme       "s0"         ,(cdr (assq 0 suite-list)))
     
     ))
 
@@ -1362,3 +1356,5 @@
    (for ([test compiler-list])
     (apply interp-tests test))
    (pretty-display "all passed"))
+
+ 
