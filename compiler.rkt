@@ -838,7 +838,7 @@
       [`(cmpq ,e1 ,e2) (set-union (free-var e1) (free-var e2))]
       [`(negq ,x) (free-var x)]
       [`(set ,cc ,arg) (set)]
-      [`(callq ,f) caller-save]
+      [`(callq ,f) (set)]
       [`(leaq ,from ,to) (free-var from)]
       [`(indirect-callq ,fname) (free-var fname)]
       [`(andq ,e1 ,e2) (set-union (free-var e1) (free-var e2))]
@@ -902,6 +902,12 @@
           (let ([new-instrs
                  (for/list ([inst instrs] [live-after lives])
                            ((build-interference live-after graph mgraph) inst))])
+            (pretty-display ast)
+            (newline)
+            (pretty-display graph)
+            (newline)
+            (pretty-display mgraph)
+            (newline)
             `(program (,vars-types ,graph ,mgraph) (type ,t) (defines ,@new-fun-defs) ,@new-instrs)))]
        
        [`(define (,fname) ,num-params ((,vars-types ,max-stack) ,lives) ,instrs ...)
@@ -1104,24 +1110,24 @@
              [color-map ((color-graph annot-graph mgraph)
                          (map (lambda (var-type) (car var-type)) vars-types))])
         (let-values ([(reg-map stk-size) (reg-spill color-map)])
-          (define root-size (* 8 
-                               (length 
-                                 (filter (lambda (var-type)
-                                                   (match (cdr var-type)
-                                                     [`(Vector ,ts ...) #t]
-                                                     [else #f]))
-                                         vars-types))))
-          (values root-size stk-size reg-map))))     
+          (define all-vecs (filter (lambda (var-type)
+                                     (match (cdr var-type)
+                                       [`(Vector ,ts ...) #t]
+                                       [else #f]))
+                                   vars-types))
+          (define root-size (* 8 (length all-vecs)))
+          (values root-size stk-size reg-map color-map))))     
     (match ast
       [`(program (,vars-types ,graph ,mgraph) (type ,t) (defines ,fun-defs ...) ,instrs ...)
        
-       (define-values (root-size stk-size reg-map) (helper vars-types graph mgraph))
+       (define-values (root-size stk-size reg-map color-map) (helper vars-types graph mgraph))
+       (pretty-display color-map)
        `(program (,stk-size ,root-size) (type ,t) 
                  (defines ,@(map allocate-registers fun-defs))
                  ,@(map (assign-homes reg-map) instrs))]
       
       [`(define (,fname) ,num-params (,vars-types ,max-stack ,graph ,mgraph) ,instrs ...)
-       (define-values (root-size stk-size reg-map) (helper vars-types graph mgraph))
+       (define-values (root-size stk-size reg-map color-map) (helper vars-types graph mgraph))
        (define stack-size (align (+ (* stk-size 8)
                                     (* max-stack 8))
                                  16))
@@ -1280,19 +1286,19 @@
            [revealed ((reveal-functions (void)) uniq)]
            [expo (expose-allocation revealed)]
            [flat ((flatten #t) expo)]
-           ;[instrs (select-instructions flat)]
-           ;[liveness ((uncover-live (void)) instrs)]
-           ;[graph ((build-interference (void) (void) (void)) liveness)]
-           ;[allocs (allocate-registers graph)]
+           [instrs (select-instructions flat)]
+           [liveness ((uncover-live (void)) instrs)]
+           [graph ((build-interference (void) (void) (void)) liveness)]
+           [allocs (allocate-registers graph)]
            ; [lower-if (lower-conditionals allocs)]
            ; [patched (patch-instructions lower-if)]
            ; [x86 (print-x86 patched)]
            )
-     (log checked)
-     (log uniq)
-     (log revealed)
-     (log expo)  
-     (log flat)
+     ; (log checked)
+     ; (log uniq)
+     ; (log revealed)
+     ; (log expo)  
+     ; (log flat)
      ;(log instrs)
      ;(log liveness)
      ;(log graph)
@@ -1304,7 +1310,7 @@
       1 
     )))
 
-#;(run 
+(run 
    '(program
   (define (minus [n : Integer] [m : Integer]) : Integer
   (+ n (- m)))
@@ -1328,8 +1334,8 @@
      `("flatten"                 ,(flatten #f)                                     ,interp-C)
      `("instruction selection"   ,select-instructions                              ,interp-x86)
      `("liveness analysis"       ,(uncover-live (void))                            ,interp-x86)
-     `("build interference"    ,(build-interference (void) (void) (void))          ,interp-x86)
-     ; `("allocate register"     ,allocate-registers                                 ,interp-x86) 
+     `("build interference"      ,(build-interference (void) (void) (void))        ,interp-x86)
+     `("allocate register"     ,allocate-registers                                 ,interp-x86) 
      ; ; `("lower-conditionals"    ,lower-conditionals                               ,interp-x86)
      ; `("patch-instructions"    ,patch-instructions                                ,interp-x86)
      ; `("x86"                   ,print-x86                                          #f)
@@ -1351,7 +1357,7 @@
     
     ))
 
-(begin
-  (for ([test compiler-list])
-   (apply interp-tests test))
-  (pretty-display "all passed"))
+; (begin
+;   (for ([test compiler-list])
+;    (apply interp-tests test))
+;   (pretty-display "all passed"))
