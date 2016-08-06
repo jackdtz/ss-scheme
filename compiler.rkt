@@ -959,12 +959,12 @@
 
 (define choose-color
   (lambda (var interfered mgraph col-map satu)
-    (let* ([move-related-vars (if (hash-has-key? mgraph var)
+    (let* ([move-related-vars (if (member-of? mgraph var)
                                   (look-up mgraph var)
                                   (set))]
            [non-interfered (set-subtract move-related-vars
-                                        interfered)]
-           [non-interfered-alloc (filter (lambda (var) (hash-has-key? col-map var))
+                                         interfered)]
+           [non-interfered-alloc (filter (lambda (var) (member-of? col-map var))
                                          (set->list non-interfered))])
       (cond [(not (null? non-interfered-alloc)) (look-up col-map (car non-interfered-alloc))]
             [(null? satu) 0]
@@ -1116,7 +1116,7 @@
       [`(program (,vars-types ,graph ,mgraph) (type ,t) (defines ,fun-defs ...) ,instrs ...)
        
        (define-values (root-size stk-size reg-map color-map) (helper vars-types graph mgraph))
-       ; (pretty-display color-map)
+       (pretty-display color-map)
        `(program (,stk-size ,root-size) (type ,t) 
                  (defines ,@(map allocate-registers fun-defs))
                  ,@(map (assign-homes reg-map) instrs))]
@@ -1126,7 +1126,7 @@
        (define stack-size (align (+ (* stk-size 8)
                                     (* max-stack 8))
                                  16))
-       `(define (,fname) ,num-params (,root-size ,stack-size) ,@(map (assign-homes reg-map) instrs))]
+       `(define (,fname) ,num-params (,stack-size ,root-size) ,@(map (assign-homes reg-map) instrs))]
       [else (error "allocate-registers could not match " ast)])))
 
 
@@ -1137,8 +1137,11 @@
 (define lower-conditionals
   (lambda (ast)
     (match ast
-      [`(program (,stk-size ,root-size) (type ,t) ,instrs ...)
-       `(program (,stk-size ,root-size) (type ,t) ,@(append* (map lower-conditionals instrs)))]
+      [`(program (,stk-size ,root-size) (type ,t) (defines ,fun-defs ...) ,instrs ...)
+       `(program (,stk-size ,root-size) (type ,t) (defines ,@(map lower-conditionals fun-defs)) 
+                 ,@(append* (map lower-conditionals instrs)))]
+      [`(define (,fname) ,num-params (,stack-size ,root-size) ,instrs ...)
+       `(define (,fname) ,num-params (,stack-size ,root-size) ,@(append* (map lower-conditionals instrs)))]
       [`(if (,cmp-op ,e1 ,e2) ,thns ,elss)
        (let ([thenlabel (gensym 'then.)]
              [elselabel (gensym 'else.)]
@@ -1183,6 +1186,8 @@
   (match e
     [`(program (,stk-size ,root-size) (type ,t) ,instr ...)
     `(program (,stk-size ,root-size) (type ,t) ,@(append* (map patch-instructions instr)))]
+    [`(define (,fname) ,num-params (,stack-size ,root-size) ,instrs ...)
+     `(define (,fname) ,num-params (,stack-size ,root-size) ,@(append* (map patch-instructions instrs)))]
     [`(cmpq (int ,e1) (int ,e2)) 
      `((movq (int ,e2) (reg rax))
        (cmpq (int ,e1) (reg rax)))]
@@ -1199,6 +1204,10 @@
             `((movq ,src (reg rax)) (,instr (reg rax) ,dst))]
            [else `((,instr ,src ,dst))])]
     [else `(,e)])))
+
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;; print-x86 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
    
 (define print-x86
   (lambda (e)
@@ -1206,6 +1215,9 @@
       [`(global-value ,label)
        (format "~a(%rip)" (label-name (symbol->string label)))]
       [`(deref ,reg ,r) (format "~a(%~a)" r reg)]
+      [`(function-ref ,label) (format "~a(%rip)" label)]
+      [`(stack-arg ,offset) (format "~a(%rsp)\n" offset)]
+      [`(indirect-callq ,f) (format "\tcallq *~a\n" (print-x86 f))]
       [`(int ,n) (format "$~a" n)]
       [(or `(reg ,r) `(byte-reg ,r)) (format "%~a" r)]
       [`(set ,cc ,arg) (format "\tset~a\t~a\n" cc (print-x86 arg))]
@@ -1223,11 +1235,53 @@
        #:when (set-member? instruction-set instr)
        (format "\t~a\t~a\n" instr (print-x86 dst))]
       
-      [`(program (,stk-size ,root-size) (type ,t) ,instrs ...)
+      [`(define (,fname) ,num-params (,stack-size ,root-size) ,instrs ...)
+       (define callee-regs (set->list callee-save))
+       (define save-callee-regs
+         (string-append*
+           (for/list ([reg callee-regs])
+             (format "\tpushq\t%~a\n" reg))))
+       (define restore-callee-regs
+         (string-append*
+           (for/list ([reg (reverse callee-regs)])
+             (format "\tpopq\t%~a\n" reg))))
+       (define callee-space
+         (* (length (set->list callee-save)) 8))
+       
+       (define initialize-roots
+         (string-append*
+           (for/list ([i (range (/ root-size 8))])
+             (string-append
+               (format "\tmovq\t$0, (%~a)\n" rootstack-reg)
+               (format "\taddq\t$~a, (%~a)\n" 8 rootstack-reg)))))
+       
+       (string-append
+         (format "\t.globl ~a\n" fname)
+         (format "~a:\n" fname)
+         (format "\tpushq\t%rbp\n")
+         (format "\tmovq\t%rsp, %rbp\n")
+         save-callee-regs
+         (format "\tsubq\t$~a, %rsp\n" stack-size)
+         initialize-roots
+         "\n"
+         (string-append* (map print-x86 instrs))
+         "\n"
+         (format "\taddq\t$~a, %rsp\n" stack-size)
+         restore-callee-regs
+         (format "\tsubq\t$~a, %~a\n" root-size rootstack-reg)
+         (format "\tpopq\t%rbp\n")
+         (format "\tretq\n")
+         )]
+      
+      [`(program (,stk-size ,root-size) (type ,t) (defines ,fun-defs ...) ,instrs ...)
+       
+       (define all-fun-x86
+         (string-append*
+           (map print-x86 fun-defs)))
        
        (define initialize-heaps
          (string-append
-           (format "\tmovq $~a, %rdi\n" root-size)
+           (format "\tmovq $~a, %rdi\n" (rootstack-size))
            (format "\tmovq $~a, %rsi\n" (heap-size))
            (format "\tcallq ~a\n" (label-name "initialize"))
            (format "\tmovq ~a, %~a\n"
@@ -1238,10 +1292,12 @@
          (string-append*
            (for/list ([i (range (/ root-size 8))])
              (string-append
-               (format "\tmovq $0, (~a)\n" rootstack-reg)
-               (format "\taddq $~a, ~a\n" 8 rootstack-reg)))))
+               (format "\tmovq $0, (%~a)\n" rootstack-reg)
+               (format "\taddq $~a, %~a\n" 8 rootstack-reg)))))
 
        (string-append
+         all-fun-x86
+         "\n"
          (format "\t.globl ~a\n" (label-name "main"))
          (format "~a:\n" (label-name "main"))
          (format "\tpushq\t%rbp\n")
@@ -1285,9 +1341,9 @@
            [liveness ((uncover-live (void)) instrs)]
            [graph ((build-interference (void) (void) (void)) liveness)]
            [allocs (allocate-registers graph)]
-           ; [lower-if (lower-conditionals allocs)]
-           ; [patched (patch-instructions lower-if)]
-           ; [x86 (print-x86 patched)]
+           [lower-if (lower-conditionals allocs)]
+           [patched (patch-instructions lower-if)]
+           [x86 (print-x86 patched)]
            )
      ; (log checked)
      ; (log uniq)
@@ -1296,27 +1352,27 @@
      ; (log flat)
      ; (log instrs)
      ;(log liveness)
-     (log graph)
+     ; (log graph)
      ; (log allocs)
      ; (log lower-if)
      ; (log patched)
       ; (log x86)
-     
-      1 
+      1
     )))
 
-; (run 
-;     '(program
+(run 
+    '(program
 
-; (define (id [x : Integer]) : Integer x)
+(define (id [x : Integer]) : Integer x)
 
-; (define (f [n : Integer] [clos : (Vector (Integer -> Integer) (Vector Integer))]) : Integer
-;   (if (eq? n 100)
-;       ((vector-ref clos 0) (vector-ref (vector-ref clos 1) 0))
-;       (f (+ n 1) (vector (vector-ref clos 0) (vector-ref clos 1)))))
+(define (f [n : Integer] [clos : (Vector (Integer -> Integer) (Vector Integer))]) : Integer
+  (if (eq? n 100)
+      ((vector-ref clos 0) (vector-ref (vector-ref clos 1) 0))
+      (f (+ n 1) (vector (vector-ref clos 0) (vector-ref clos 1)))))
 
-; (f 0 (vector id (vector 42)))
-;   ))
+(f 0 (vector id (vector 42)))
+
+  ))
 
 (define interp (new interp-R3))
 (define interp-F (send interp interp-F '()))
@@ -1331,9 +1387,9 @@
      `("liveness analysis"       ,(uncover-live (void))                            ,interp-x86)
      `("build interference"      ,(build-interference (void) (void) (void))        ,interp-x86)
      `("allocate register"     ,allocate-registers                                 ,interp-x86) 
-     ; ; `("lower-conditionals"    ,lower-conditionals                               ,interp-x86)
-     ; `("patch-instructions"    ,patch-instructions                                ,interp-x86)
-     ; `("x86"                   ,print-x86                                          #f)
+     `("lower-conditionals"    ,lower-conditionals                               ,interp-x86)
+     `("patch-instructions"     ,patch-instructions                                ,interp-x86)
+     `("x86"                    ,print-x86                                          #f)
      ))
 
 (define suite-list
@@ -1347,14 +1403,14 @@
     ))
 
 (define compiler-list
-  ;; Name           Typechecker               Compiler-Passes      Initial interpreter   Test-name    Valid suites
-  `(("conditionals"  ,(type-check (void) (void))    ,test-passes          ,interp-scheme       "s0"         ,(cdr (assq 0 suite-list)))
+  ;; Name           Typechecker                     Compiler-Passes      Initial interpreter   Test-name    Valid suites
+  `(("conditionals"  ,(type-check (void) (void))    ,test-passes          ,interp-scheme       "s3"         ,(cdr (assq 3 suite-list)))
     
     ))
 
-(begin
-   (for ([test compiler-list])
-    (apply interp-tests test))
-   (pretty-display "all passed"))
+; (begin
+;    (for ([test compiler-list])
+;     (apply interp-tests test))
+;    (pretty-display "all passed"))
 
  

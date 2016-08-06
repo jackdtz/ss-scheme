@@ -21,7 +21,8 @@
 (define passes
  (list
   `("uniquify"              ,(uniquify '())                                   ,interp-scheme)
-  `("expose allocation"     ,expose-allocation                                ,interp-scheme)
+  `("reveal-functions"       ,(reveal-functions '())                         ,interp-F)
+  `("expose allocation"     ,expose-allocation                                ,interp-F)
   `("flatten"               ,(flatten #t)                                     ,interp-C)
   `("instruction selection" ,select-instructions                              ,interp-x86)
   `("liveness analysis"     ,(uncover-live (void))                            ,interp-x86)
@@ -42,8 +43,8 @@
 ;; Table associating names of compilers with the information for
 ;; running and testing them.
 (define compiler-list
-  ;; Name           Typechecker               Compiler-Passes      Initial interpreter  Valid suites
- `(("compiler"     ,(type-check (void))    ,passes              ,interp-scheme          (2))
+  ;; Name           Typechecker                   Compiler-Passes      Initial interpreter  Valid suites
+ `(("compiler"     ,(type-check (void) (void))    ,passes              ,interp-scheme          (3))
   ; `(("conditionals"  ,#f                       ,passes               ,interp-scheme       "s2"         ,(cdr (assq 0 suite-list)))
     ))
 
