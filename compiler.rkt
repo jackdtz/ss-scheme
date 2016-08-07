@@ -12,6 +12,8 @@
 ;; utilities for the whole compiler
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+(define first-offset 8)
+
 (define para-registers
   (list 'rdi 'rsi 'rdx 'rcx 'r8 'r9))
 
@@ -65,6 +67,12 @@
   (lambda (x)
     (match x
       [`(,args ... -> ,ret) #t]
+      [else #f])))
+
+(define is-vector?
+  (lambda (x)
+    (match x
+      [`(Vector ,es ...) #t]
       [else #f])))
 
 
@@ -950,21 +958,20 @@
     (hash-for-each
      graph              
      (lambda (var adj-nodes)
-       (define all-regs (filter (lambda (var) (set-member? registers var)) (set->list adj-nodes)))
-       (define all-reg-colors (map (lambda (reg) (register->color reg)) all-regs))
-       (define all-general-reg-color (filter (lambda (color) (>= color 0)) all-reg-colors))
-       (define pre-saturated (list->set all-general-reg-color))
-       (hash-set! graph var `(,adj-nodes ,pre-saturated))))
+       (let ([pre-saturated (list->set
+                             (map (lambda (reg) (register->color reg))
+                                  (filter (lambda (var) (set-member? registers var)) (set->list adj-nodes))))])
+       (hash-set! graph var `(,adj-nodes ,pre-saturated)))))
     graph))
 
 (define choose-color
   (lambda (var interfered mgraph col-map satu)
-    (let* ([move-related-vars (if (member-of? mgraph var)
+    (let* ([move-related-vars (if (hash-has-key? mgraph var)
                                   (look-up mgraph var)
                                   (set))]
            [non-interfered (set-subtract move-related-vars
-                                         interfered)]
-           [non-interfered-alloc (filter (lambda (var) (member-of? col-map var))
+                                        interfered)]
+           [non-interfered-alloc (filter (lambda (var) (hash-has-key? col-map var))
                                          (set->list non-interfered))])
       (cond [(not (null? non-interfered-alloc)) (look-up col-map (car non-interfered-alloc))]
             [(null? satu) 0]
@@ -1045,6 +1052,7 @@
               
               (loop node-heap map-col)))))))
                          
+
 (define reg-spill
   (lambda (color-map)
     (let* ([word-size 8]
@@ -1065,15 +1073,15 @@
                                          (+ 1 (- (cdr col-map) reg-len)))))])))
          (hash->list color-map)))
        (align (* word-size number-of-spill) 16)))))
-        
+    
+    
 (define assign-homes
   (lambda (reg-map)
     (lambda (e)
       (define recur (assign-homes reg-map))
       (match e
         [`(global-value ,name) e]
-        [`(deref ,reg ,s) e]
-        [`(stack-arg ,offset) e]
+        [`(deref r11 ,s) e]
         [`(var ,x) (look-up reg-map x)]
         [`(int ,i) `(int ,i)]
         [`(reg ,r) `(reg ,r)]
@@ -1094,39 +1102,28 @@
          `(if ,(recur cnd)
               ,(map recur thn)
               ,(map recur els))]
-        [`(function-ref ,name) `(function-ref ,name)]
-        [`(indirect-callq ,f) `(indirect-callq ,(recur f))]
         [else (error "assign-homes could not match " e)]))))      
 
+
 (define allocate-registers
-  (lambda (ast)  
-    (define (helper vars-types graph mgraph)
-      (let* ([annot-graph (annotate graph)]
-             [color-map ((color-graph annot-graph mgraph)
-                         (map (lambda (var-type) (car var-type)) vars-types))])
-        (let-values ([(reg-map stk-size) (reg-spill color-map)])
-          (define all-vecs (filter (lambda (var-type)
-                                     (match (cdr var-type)
-                                       [`(Vector ,ts ...) #t]
-                                       [else #f]))
-                                   vars-types))
-          (define root-size (* 8 (length all-vecs)))
-          (values root-size stk-size reg-map color-map))))     
+  (lambda (ast)
     (match ast
-      [`(program (,vars-types ,graph ,mgraph) (type ,t) (defines ,fun-defs ...) ,instrs ...)
-       
-       (define-values (root-size stk-size reg-map color-map) (helper vars-types graph mgraph))
-       (pretty-display color-map)
-       `(program (,stk-size ,root-size) (type ,t) 
-                 (defines ,@(map allocate-registers fun-defs))
-                 ,@(map (assign-homes reg-map) instrs))]
-      
-      [`(define (,fname) ,num-params (,vars-types ,max-stack ,graph ,mgraph) ,instrs ...)
-       (define-values (root-size stk-size reg-map color-map) (helper vars-types graph mgraph))
-       (define stack-size (align (+ (* stk-size 8)
-                                    (* max-stack 8))
-                                 16))
-       `(define (,fname) ,num-params (,stack-size ,root-size) ,@(map (assign-homes reg-map) instrs))]
+      [`(program (,vars ,graph ,mgraph) (type ,t) (defines ,fun-defs ...) ,instrs ...)
+
+       (let* ([annot-graph (annotate graph)]
+              [color-map ((color-graph annot-graph mgraph) 
+                          (map (lambda (var) (car var)) vars))])
+        (let-values ([(reg-map stk-size) (reg-spill color-map)])
+          (define root-size (* 8 
+                               (length 
+                                 (filter (lambda (var-type)
+                                                   (match (cdr var-type)
+                                                     [`(Vector ,ts ...) #t]
+                                                     [else #f]))
+                                         vars))))
+          `(program (,stk-size ,root-size) (type ,t)
+                    (defines ,@fun-defs)
+                     ,@(map (assign-homes reg-map) instrs))))]
       [else (error "allocate-registers could not match " ast)])))
 
 
@@ -1351,27 +1348,43 @@
      ; (log expo)  
      ; (log flat)
      ; (log instrs)
-     ;(log liveness)
+     ; (log liveness)
      ; (log graph)
      ; (log allocs)
      ; (log lower-if)
-     ; (log patched)
+     (log patched)
       ; (log x86)
       1
     )))
 
 (run 
     '(program
-
-(define (id [x : Integer]) : Integer x)
-
-(define (f [n : Integer] [clos : (Vector (Integer -> Integer) (Vector Integer))]) : Integer
-  (if (eq? n 100)
-      ((vector-ref clos 0) (vector-ref (vector-ref clos 1) 0))
-      (f (+ n 1) (vector (vector-ref clos 0) (vector-ref clos 1)))))
-
-(f 0 (vector id (vector 42)))
-
+(let ([x1 (read)])
+(let ([x2 (read)])
+(let ([x3 (read)])
+(let ([x4 (read)])
+(let ([x5 (read)])
+(let ([x6 (read)])
+(let ([x7 (read)])
+(let ([x8 (read)])
+(let ([x9 (read)])
+(let ([x10 (read)])
+(let ([x11 (read)])
+(let ([x12 (read)])
+(let ([x13 (read)])
+(let ([x14 (read)])
+(let ([x15 (read)])
+(let ([x16 (read)])
+  (+ 
+    (+ 
+       (+ 
+          (+ (+ x1 (- x2)) (+ x3 (- x4)))
+          (+ (+ x5 (- x6)) (+ x7 (- x8)))
+          )
+  (+ 
+    (+ (+ x9 (- x10)) (+ x11 (- x12)))
+     (+ (+ x13 (- x14)) (+ x15 (- x16)))))
+     42)))))))))))))))))
   ))
 
 (define interp (new interp-R3))
