@@ -952,16 +952,19 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; register allocation ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-; add saturation for each node
+; Inside the graph, annotate each node with each pre-saturation set. 
+; Saturation is the set of registers that a node(var) has conflict with.
+; Since some variable or temp vars are adjacent to register in the graph,
+; we need to extract those registers from the adjacent set and that is the pre-saturation set
 (define annotate
   (lambda (graph)
     (hash-for-each
      graph              
      (lambda (var adj-nodes)
-       (let ([pre-saturated (list->set
-                             (map (lambda (reg) (register->color reg))
-                                  (filter (lambda (var) (set-member? registers var)) (set->list adj-nodes))))])
-       (hash-set! graph var `(,adj-nodes ,pre-saturated)))))
+       (define all-regs (filter (lambda (var) (set-member? registers var)) (set->list adj-nodes)))
+       (define regs->colors (map (lambda (reg) (register->color reg)) all-regs))
+       (define pre-saturated (list->set regs->colors))
+       (hash-set! graph var `(,adj-nodes ,pre-saturated))))
     graph))
 
 (define choose-color
@@ -1359,32 +1362,20 @@
 
 (run 
     '(program
-(let ([x1 (read)])
-(let ([x2 (read)])
-(let ([x3 (read)])
-(let ([x4 (read)])
-(let ([x5 (read)])
-(let ([x6 (read)])
-(let ([x7 (read)])
-(let ([x8 (read)])
-(let ([x9 (read)])
-(let ([x10 (read)])
-(let ([x11 (read)])
-(let ([x12 (read)])
-(let ([x13 (read)])
-(let ([x14 (read)])
-(let ([x15 (read)])
-(let ([x16 (read)])
-  (+ 
-    (+ 
-       (+ 
-          (+ (+ x1 (- x2)) (+ x3 (- x4)))
-          (+ (+ x5 (- x6)) (+ x7 (- x8)))
-          )
-  (+ 
-    (+ (+ x9 (- x10)) (+ x11 (- x12)))
-     (+ (+ x13 (- x14)) (+ x15 (- x16)))))
-     42)))))))))))))))))
+(let ([v0 (vector)])
+  (let ([v1 (vector 42 v0)])
+    (let ([v2 (vector v1 42 v0)])
+      (let ([v3 (vector v2 v1 42 v0)])
+        (let ([v4 (vector v3 v2 v1 42 v0)])
+          (let ([v5 (vector v4 v3 v2 v1 42 v0)])
+            (let ([v6 (vector v5 v4 v3 v2 v1 42 v0)])
+              (let ([v7 (vector v6 v5 v4 v3 v2 v1 42 v0)])      
+                (let ([v8 (vector v7 v6 v5 v4 v3 v2 v1 42 v0)])
+                  (let ([v9 (vector v8 v7 v6 v5 v4 v3 v2 v1 42 v0)])
+                    (let ([v10 (vector v9 v8 v7 v6 v5 v4 v3 v2 v1 42 v0)])
+                      (let ([v11 (vector v10 v9 v8 v7 v6 v5 v4 v3 v2 v1 42 v0)])
+                        (let ([v12 (vector v11 v10 v9 v8 v7 v6 v5 v4 v3 v2 v1 42 v0)])
+                          (vector-ref v12 11))))))))))))))
   ))
 
 (define interp (new interp-R3))
