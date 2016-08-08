@@ -719,7 +719,7 @@
          (callq collect))]
       [`(assign ,lhs (allocate ,len (Vector ,ts ...)))
        (define new-lhs (select-instructions lhs))
-       (define not-forwading-bit 0)
+       (define not-forwading-bit 1)
        (define length-bits (arithmetic-shift len 1))
        (define ptr-mask-bits
          (arithmetic-shift 
@@ -952,7 +952,7 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; register allocation ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-; Inside the graph, annotate each node with each pre-saturation set. 
+; Inside the graph, annotate each node with its pre-saturation set. 
 ; Saturation is the set of registers that a node(var) has conflict with.
 ; Since some variable or temp vars are adjacent to register in the graph,
 ; we need to extract those registers from the adjacent set and that is the pre-saturation set
@@ -968,7 +968,7 @@
     graph))
 
 (define choose-color
-  (lambda (var interfered mgraph col-map satu)
+  (lambda (var interfered mgraph col-map satu)  
     (let* ([move-related-vars (if (hash-has-key? mgraph var)
                                   (look-up mgraph var)
                                   (set))]
@@ -983,7 +983,9 @@
              (let ([diff 
                     (set-subtract (apply set (range 0 (+ 2 (apply max satu))))
                                   (list->set satu))])
-               (car (sort (set->list diff) <)))]))))
+               (if (set-empty? diff)
+                   0
+                   (car (sort (set->list diff) <))))]))))
            
           
 (define node-adjs  (lambda (x) (cadr x)))
@@ -1054,28 +1056,62 @@
               (update-adjs-saturations! node-heap adjs color)
               
               (loop node-heap map-col)))))))
-                         
+
 
 (define reg-spill
-  (lambda (color-map)
-    (let* ([word-size 8]
-           [reg-len (vector-length general-registers)]
-           [spilled-color (map (lambda (v) (cdr v))
-                               (filter (lambda (v) (>= (cdr v) reg-len))
-                                       (hash->list color-map)))]
-           [number-of-spill (set-count (apply set spilled-color))])
-      (values
-       (make-hash
+  (lambda (vars-types color-map)
+    (define word-size 8)
+    (define reg-len (vector-length general-registers))
+    (define num-of-stack-spill 0)
+    (define num-of-root-spill 0)
+    (define homes 
+      (make-hash
         (map
-         (lambda (col-map)
-           `(,(car col-map)
-             ,@(cond [(< (cdr col-map) reg-len)
-                      `(reg ,(vector-ref general-registers (cdr col-map)))]
-                     [else
-                      `(deref rbp ,(- (* word-size
-                                         (+ 1 (- (cdr col-map) reg-len)))))])))
-         (hash->list color-map)))
-       (align (* word-size number-of-spill) 16)))))
+          (lambda (var-type)
+            (define var (car var-type))
+            (define type (cdr var-type))
+            (define var-color-index (look-up color-map var))
+            (define home
+              (cond [(< var-color-index reg-len) 
+                     `(reg ,(vector-ref general-registers var-color-index))]
+                    [(is-vector? type)
+                     (define i num-of-root-spill)
+                     (set! num-of-root-spill (add1 i))
+                     `(deref ,rootstack-reg
+                             ,(- (* (add1 i) word-size)))]
+                    [else
+                     (define i num-of-stack-spill)
+                     (set! num-of-stack-spill (add1 i))
+                     `(deref rbp ,(- (* word-size
+                                        (+ 1 (- var-color-index reg-len)))))]))
+            
+            `(,var . ,home))
+        vars-types)))
+    (values homes
+            (align (* word-size num-of-stack-spill) 16)
+            (align (* word-size num-of-root-spill) 16))))
+                         
+
+; (define reg-spill
+;   (lambda (color-map)
+;     (let* ([word-size 8]
+;            [reg-len (vector-length general-registers)]
+;            [spilled-color (map (lambda (v) (cdr v))
+;                                (filter (lambda (v) (>= (cdr v) reg-len))
+;                                        (hash->list color-map)))]
+;            [number-of-spill (set-count (apply set spilled-color))])
+;       (values
+;        (make-hash
+;         (map
+;          (lambda (col-map)
+;            `(,(car col-map)
+;              ,@(cond [(< (cdr col-map) reg-len)
+;                       `(reg ,(vector-ref general-registers (cdr col-map)))]
+;                      [else
+;                       `(deref rbp ,(- (* word-size
+;                                          (+ 1 (- (cdr col-map) reg-len)))))])))
+;          (hash->list color-map)))
+;        (align (* word-size number-of-spill) 16)))))
     
     
 (define assign-homes
@@ -1111,19 +1147,18 @@
 (define allocate-registers
   (lambda (ast)
     (match ast
-      [`(program (,vars ,graph ,mgraph) (type ,t) (defines ,fun-defs ...) ,instrs ...)
-
+      [`(program (,vars-types ,graph ,mgraph) (type ,t) (defines ,fun-defs ...) ,instrs ...)
        (let* ([annot-graph (annotate graph)]
               [color-map ((color-graph annot-graph mgraph) 
-                          (map (lambda (var) (car var)) vars))])
-        (let-values ([(reg-map stk-size) (reg-spill color-map)])
-          (define root-size (* 8 
-                               (length 
-                                 (filter (lambda (var-type)
-                                                   (match (cdr var-type)
-                                                     [`(Vector ,ts ...) #t]
-                                                     [else #f]))
-                                         vars))))
+                          (map (lambda (var) (car var)) vars-types))])
+        (let-values ([(reg-map stk-size root-size) (reg-spill vars-types color-map)])
+          ; (define root-size (* 8 
+          ;                      (length 
+          ;                        (filter (lambda (var-type)
+          ;                                          (match (cdr var-type)
+          ;                                            [`(Vector ,ts ...) #t]
+          ;                                            [else #f]))
+          ;                                vars))))
           `(program (,stk-size ,root-size) (type ,t)
                     (defines ,@fun-defs)
                      ,@(map (assign-homes reg-map) instrs))))]
@@ -1355,27 +1390,19 @@
      ; (log graph)
      ; (log allocs)
      ; (log lower-if)
-     (log patched)
-      ; (log x86)
-      1
+     ; (log patched)
+      (log x86)
+      ; 1
     )))
 
 (run 
     '(program
-(let ([v0 (vector)])
-  (let ([v1 (vector 42 v0)])
-    (let ([v2 (vector v1 42 v0)])
-      (let ([v3 (vector v2 v1 42 v0)])
-        (let ([v4 (vector v3 v2 v1 42 v0)])
-          (let ([v5 (vector v4 v3 v2 v1 42 v0)])
-            (let ([v6 (vector v5 v4 v3 v2 v1 42 v0)])
-              (let ([v7 (vector v6 v5 v4 v3 v2 v1 42 v0)])      
-                (let ([v8 (vector v7 v6 v5 v4 v3 v2 v1 42 v0)])
-                  (let ([v9 (vector v8 v7 v6 v5 v4 v3 v2 v1 42 v0)])
-                    (let ([v10 (vector v9 v8 v7 v6 v5 v4 v3 v2 v1 42 v0)])
-                      (let ([v11 (vector v10 v9 v8 v7 v6 v5 v4 v3 v2 v1 42 v0)])
-                        (let ([v12 (vector v11 v10 v9 v8 v7 v6 v5 v4 v3 v2 v1 42 v0)])
-                          (vector-ref v12 11))))))))))))))
+(let ([t (vector 40 #t (vector 2))])
+  (if (vector-ref t 1)
+      (+ (vector-ref t 0)
+         (vector-ref (vector-ref t 2) 0))
+      44))
+
   ))
 
 (define interp (new interp-R3))
