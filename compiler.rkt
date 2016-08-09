@@ -12,6 +12,27 @@
 ;; utilities for the whole compiler
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+(define pretty-display-color-map
+  (lambda (color-map)
+    (define new-lst
+      (hash-map
+        color-map
+        (lambda (var color) `(,(symbol->string var) . ,color))))
+    (pretty-display (sort new-lst #:key car string<?))))
+
+(define pretty-display-graph
+  (lambda (graph)
+    (define new-graph
+      (hash-map
+        graph
+        (lambda (var adj-nodes)
+          `(,(symbol->string var) . ,(list (sort (map (lambda (elt) (symbol->string elt)) 
+                               (set->list adj-nodes)) 
+                          string<?))))))
+    (define new-graph* (sort new-graph #:key car string<?))
+    (pretty-display new-graph*)))
+    
+
 (define first-offset 8)
 
 (define para-registers
@@ -253,7 +274,7 @@
                                Void)
                     'Void)]
            [else
-            (display (format "vector: ~a" vec-ty))
+            ; (display (format "vector: ~a" vec-ty))
             (error (format "expected a vector type in vector-set!, not ~a in ~a" vec-ty ast))])]
         
         ; function
@@ -894,22 +915,21 @@
                             (read-vars e)))]))))
 
 (define build-interference
-  (lambda (live-after graph mgraph)
+  (lambda (live-after graph mgraph vars-types)
     
     (define var? (lambda (x) (equal? (car x) 'var)))
     (define get-var (lambda (x) (cadr x)))
-    
     (lambda (ast)
       (match ast
         
-       [`(program (,vars-types ,lives) (type ,t) (defines ,fun-defs ...) ,instrs ...)       
-        (define new-fun-defs (map (build-interference live-after graph mgraph) fun-defs))
+       [`(program (,vars-types ,lives) (type ,t) (defines ,fun-defs ...) ,instrs ...)   
+        (define new-fun-defs (map (build-interference live-after graph mgraph vars-types) fun-defs))
         (let* ([vars* (map (lambda (var-type) (car var-type)) vars-types)]
                [graph (make-graph vars*)]
                [mgraph (make-graph vars*)])
           (let ([new-instrs
                  (for/list ([inst instrs] [live-after lives])
-                           ((build-interference live-after graph mgraph) inst))])
+                           ((build-interference live-after graph mgraph vars-types) inst))])
             `(program (,vars-types ,graph ,mgraph) (type ,t) (defines ,@new-fun-defs) ,@new-instrs)))]
        
        [`(define (,fname) ,num-params ((,vars-types ,max-stack) ,lives) ,instrs ...)
@@ -918,7 +938,7 @@
                [mgraph (make-graph vars*)])          
           (let ([new-instrs
                  (for/list ([inst instrs] [live-after lives])
-                           ((build-interference live-after graph mgraph) inst))])
+                           ((build-interference live-after graph mgraph vars-types) inst))])
             `(define (,fname) ,num-params (,vars-types ,max-stack ,graph ,mgraph) ,@new-instrs)))]
         
         [(or `(movq ,src ,dst) `(movzbq ,src ,dst))
@@ -932,13 +952,21 @@
            ast)]  
         [`(callq ,label) 
          (begin 
+           ; caller-save registers are alived before function call
+           ; so all registers that are lived at this point are interfered with caller-save registers
            (for ([v live-after])
                 (for ([r caller-save] #:when (not (equal? v r)))
                      (add-edge graph v r)))
+           ; TODO: write comment the following code block
+           (for ([v live-after])
+             (cond [(and (not (set-member? registers v))
+                         (is-vector? (cdr (assq v vars-types))))
+                    (for ([u callee-save])
+                      (add-edge graph u v))]))
            ast)]
         [`(if ,cnd ,thn ,thn-after ,els ,els-after)
-          (let ([new-thn (map (lambda (instr live-after) ((build-interference live-after graph mgraph) instr )) thn thn-after)]
-                [new-els (map (lambda (instr live-after) ((build-interference live-after graph mgraph) instr )) els els-after)])
+          (let ([new-thn (map (lambda (instr live-after) ((build-interference live-after graph mgraph vars-types) instr )) thn thn-after)]
+                [new-els (map (lambda (instr live-after) ((build-interference live-after graph mgraph vars-types) instr )) els els-after)])
            `(if ,cnd ,new-thn ,new-els))]
 
         [else
@@ -1090,29 +1118,6 @@
     (values homes
             (align (* word-size num-of-stack-spill) 16)
             (align (* word-size num-of-root-spill) 16))))
-                         
-
-; (define reg-spill
-;   (lambda (color-map)
-;     (let* ([word-size 8]
-;            [reg-len (vector-length general-registers)]
-;            [spilled-color (map (lambda (v) (cdr v))
-;                                (filter (lambda (v) (>= (cdr v) reg-len))
-;                                        (hash->list color-map)))]
-;            [number-of-spill (set-count (apply set spilled-color))])
-;       (values
-;        (make-hash
-;         (map
-;          (lambda (col-map)
-;            `(,(car col-map)
-;              ,@(cond [(< (cdr col-map) reg-len)
-;                       `(reg ,(vector-ref general-registers (cdr col-map)))]
-;                      [else
-;                       `(deref rbp ,(- (* word-size
-;                                          (+ 1 (- (cdr col-map) reg-len)))))])))
-;          (hash->list color-map)))
-;        (align (* word-size number-of-spill) 16)))))
-    
     
 (define assign-homes
   (lambda (reg-map)
@@ -1152,19 +1157,12 @@
               [color-map ((color-graph annot-graph mgraph) 
                           (map (lambda (var) (car var)) vars-types))])
         (let-values ([(reg-map stk-size root-size) (reg-spill vars-types color-map)])
-          ; (define root-size (* 8 
-          ;                      (length 
-          ;                        (filter (lambda (var-type)
-          ;                                          (match (cdr var-type)
-          ;                                            [`(Vector ,ts ...) #t]
-          ;                                            [else #f]))
-          ;                                vars))))
+          
+          
           `(program (,stk-size ,root-size) (type ,t)
                     (defines ,@fun-defs)
                      ,@(map (assign-homes reg-map) instrs))))]
       [else (error "allocate-registers could not match " ast)])))
-
-
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; lower-conditionals ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -1213,7 +1211,7 @@
    (lambda (x)
     (match x
       [`(global-value ,name) #t]
-      [`(deref rbp ,n) #t]
+      [`(deref ,reg ,n) #t]
       [`(stack-arg ,offset) #t]
       [`(function-ref ,name) #t]
      [else #f])))
@@ -1374,7 +1372,7 @@
            [flat ((flatten #t) expo)]
            [instrs (select-instructions flat)]
            [liveness ((uncover-live (void)) instrs)]
-           [graph ((build-interference (void) (void) (void)) liveness)]
+           [graph ((build-interference (void) (void) (void) (void)) liveness)]
            [allocs (allocate-registers graph)]
            [lower-if (lower-conditionals allocs)]
            [patched (patch-instructions lower-if)]
@@ -1390,18 +1388,16 @@
      ; (log graph)
      ; (log allocs)
      ; (log lower-if)
-     ; (log patched)
-      (log x86)
-      ; 1
+     (log patched)
+      ; (log x86)
+      1
     )))
 
 (run 
     '(program
-(let ([t (vector 40 #t (vector 2))])
-  (if (vector-ref t 1)
-      (+ (vector-ref t 0)
-         (vector-ref (vector-ref t 2) 0))
-      44))
+(let ([v1 (vector 42)])
+  (let ([v2 (vector v1)])
+    (vector-ref (vector-ref v2 0) 0)))
 
   ))
 
@@ -1416,7 +1412,7 @@
      `("flatten"                 ,(flatten #f)                                     ,interp-C)
      `("instruction selection"   ,select-instructions                              ,interp-x86)
      `("liveness analysis"       ,(uncover-live (void))                            ,interp-x86)
-     `("build interference"      ,(build-interference (void) (void) (void))        ,interp-x86)
+     `("build interference"      ,(build-interference (void) (void) (void) (void)) ,interp-x86)
      `("allocate register"     ,allocate-registers                                 ,interp-x86) 
      `("lower-conditionals"    ,lower-conditionals                               ,interp-x86)
      `("patch-instructions"     ,patch-instructions                                ,interp-x86)
