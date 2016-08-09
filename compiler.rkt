@@ -1121,13 +1121,16 @@
             (align (* word-size num-of-root-spill) 16))))
     
 (define assign-homes
-  (lambda (reg-map)
+  (lambda (homes)
     (lambda (e)
-      (define recur (assign-homes reg-map))
+      (define recur (assign-homes homes))
       (match e
         [`(global-value ,name) e]
-        [`(deref r11 ,s) e]
-        [`(var ,x) (look-up reg-map x)]
+        [`(deref ,reg ,s) e]
+        [`(function-ref ,f) e]
+        [`(indirect-callq ,f) `(indirect-callq ,(recur f))]
+        [`(stack-arg ,offset) e]
+        [`(var ,x) (look-up homes x)]
         [`(int ,i) `(int ,i)]
         [`(reg ,r) `(reg ,r)]
         [`(byte-reg ,r) `(byte-reg ,r)]
@@ -1164,13 +1167,13 @@
       [`(program (,vars-types ,graph ,mgraph) (type ,t) (defines ,fun-defs ...) ,instrs ...)
        (define-values (homes stack-size root-size) (helper graph mgraph vars-types))
        `(program (,stack-size ,root-size) (type ,t)
-                 (defines ,@fun-defs)
+                 (defines ,@(map allocate-registers fun-defs))
                  ,@(map (assign-homes homes) instrs))]
       [`(define (,fname) ,num-params (,vars-types ,max-stack-args ,graph ,mgraph) ,instrs ...)
        (define-values (homes stack-size root-size) (helper graph mgraph vars-types))
        (define adjust-stack-size
          (align (+ (* max-stack-args 8) stack-size) 16))
-       `(define (,fname) ,num-params (,adjust-stack-size ,rootstack-reg) ,@(map (assign-homes homes) instrs))]
+       `(define (,fname) ,num-params (,adjust-stack-size ,root-size) ,@(map (assign-homes homes) instrs))]
        
       [else (error "allocate-registers could not match " ast)])))
 
@@ -1227,8 +1230,9 @@
      [else #f])))
 
   (match e
-    [`(program (,stk-size ,root-size) (type ,t) ,instr ...)
-    `(program (,stk-size ,root-size) (type ,t) ,@(append* (map patch-instructions instr)))]
+    [`(program (,stk-size ,root-size) (type ,t) (defines ,fun-defs ...) ,instr ...)
+    `(program (,stk-size ,root-size) (type ,t) (defines ,@(map patch-instructions fun-defs)) 
+                                               ,@(append* (map patch-instructions instr)))]
     [`(define (,fname) ,num-params (,stack-size ,root-size) ,instrs ...)
      `(define (,fname) ,num-params (,stack-size ,root-size) ,@(append* (map patch-instructions instrs)))]
     [`(cmpq (int ,e1) (int ,e2)) 
@@ -1387,7 +1391,7 @@
            [allocs (allocate-registers graph)]
            [lower-if (lower-conditionals allocs)]
            [patched (patch-instructions lower-if)]
-           [x86 (print-x86 patched)]
+           ; [x86 (print-x86 patched)]
            )
      ; (log checked)
      ; (log uniq)
@@ -1397,18 +1401,20 @@
      ; (log instrs)
      ; (log liveness)
      ; (log graph)
-     ; (log allocs)
+     (log allocs)
      ; (log lower-if)
      (log patched)
-      (log x86)
+      ; (log x86)
       1
     )))
 
-; (run 
-;     '(program
-; (vector 42 )
+(run 
+    '(program
+ (define (id [x : Integer]) : Integer x)
+ (id 42)
 
-;   ))
+
+  ))
 
 (define interp (new interp-R3))
 (define interp-F (send interp interp-F '()))
