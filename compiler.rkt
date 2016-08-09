@@ -429,7 +429,7 @@
       [`(has-type (vector ,(app expose-allocation e*) ...) ,vec-type)
        (define len (length e*))
        (define size (* 8 (+ len 1)))
-       (define vec (gensym 'alloc.))
+       (define vec (gensym 'alloc-addr.))
        (define x* (map (lambda (e) (gensym 'vec-elt.)) e*))
        (define init-vec (foldr
                          (lambda (loc elt init)
@@ -763,7 +763,8 @@
        `((movq ,(select-instructions vec) (reg r11))
          (movq (deref r11 ,(* 8 (+ 1 i))) ,(select-instructions lhs)))]
       [`(assign ,lhs (vector-set! ,vec ,i ,elt))
-       `((movq ,(select-instructions vec) (reg r11))
+       (define move-stm (if (= i 0) `((movq ,(select-instructions vec) (reg r11))) '()))
+       `(,@move-stm
          (movq ,(select-instructions elt) (deref r11 ,(* 8 (+ 1 i))))
          (movq (int 0) ,(select-instructions lhs)))]
       
@@ -1157,8 +1158,6 @@
               [color-map ((color-graph annot-graph mgraph) 
                           (map (lambda (var) (car var)) vars-types))])
         (let-values ([(reg-map stk-size root-size) (reg-spill vars-types color-map)])
-          
-          
           `(program (,stk-size ,root-size) (type ,t)
                     (defines ,@fun-defs)
                      ,@(map (assign-homes reg-map) instrs))))]
@@ -1345,8 +1344,9 @@
          "\n"
          (string-append* (map print-x86 instrs))
          "\n"
-         (format "\tmovq\t%rax, %rdi\n")
-         (format "\tcallq\t~a\n" (label-name "print_int"))
+         (print-by-type t)
+         ; (format "\tmovq\t%rax, %rdi\n")
+         ; (format "\tcallq\t~a\n" (label-name "print_int"))
          (format "\tmovq\t$0, %rax\n")
          (format "\taddq\t$~a, %rsp\n" stk-size)
          (string-append* (map
@@ -1389,15 +1389,13 @@
      ; (log allocs)
      ; (log lower-if)
      (log patched)
-      ; (log x86)
+      (log x86)
       1
     )))
 
 (run 
     '(program
-(let ([v1 (vector 42)])
-  (let ([v2 (vector v1)])
-    (vector-ref (vector-ref v2 0) 0)))
+(vector 42 )
 
   ))
 
