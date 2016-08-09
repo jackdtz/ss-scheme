@@ -1264,7 +1264,7 @@
       [`(deref ,reg ,r) (format "~a(%~a)" r reg)]
       [`(function-ref ,label) (format "~a(%rip)" label)]
       [`(stack-arg ,offset) (format "~a(%rsp)\n" offset)]
-      [`(indirect-callq ,f) (format "\tcallq *~a\n" (print-x86 f))]
+      [`(indirect-callq ,f) (format "\tcallq\t*~a\n" (print-x86 f))]
       [`(int ,n) (format "$~a" n)]
       [(or `(reg ,r) `(byte-reg ,r)) (format "%~a" r)]
       [`(set ,cc ,arg) (format "\tset~a\t~a\n" cc (print-x86 arg))]
@@ -1318,6 +1318,7 @@
          (format "\tsubq\t$~a, %~a\n" root-size rootstack-reg)
          (format "\tpopq\t%rbp\n")
          (format "\tretq\n")
+         "\n"
          )]
       
       [`(program (,stk-size ,root-size) (type ,t) (defines ,fun-defs ...) ,instrs ...)
@@ -1328,10 +1329,10 @@
        
        (define initialize-heaps
          (string-append
-           (format "\tmovq $~a, %rdi\n" (rootstack-size))
-           (format "\tmovq $~a, %rsi\n" (heap-size))
-           (format "\tcallq ~a\n" (label-name "initialize"))
-           (format "\tmovq ~a, %~a\n"
+           (format "\tmovq\t$~a, %rdi\n" (rootstack-size))
+           (format "\tmovq\t$~a, %rsi\n" (heap-size))
+           (format "\tcallq\t~a\n" (label-name "initialize"))
+           (format "\tmovq\t~a, %~a\n"
                    (print-x86 '(global-value rootstack_begin))
                    rootstack-reg)))
        
@@ -1339,8 +1340,8 @@
          (string-append*
            (for/list ([i (range (/ root-size 8))])
              (string-append
-               (format "\tmovq $0, (%~a)\n" rootstack-reg)
-               (format "\taddq $~a, %~a\n" 8 rootstack-reg)))))
+               (format "\tmovq\t$0, (%~a)\n" rootstack-reg)
+               (format "\taddq\t$~a, %~a\n" 8 rootstack-reg)))))
 
        (string-append
          all-fun-x86
@@ -1391,7 +1392,7 @@
            [allocs (allocate-registers graph)]
            [lower-if (lower-conditionals allocs)]
            [patched (patch-instructions lower-if)]
-           ; [x86 (print-x86 patched)]
+           [x86 (print-x86 patched)]
            )
      ; (log checked)
      ; (log uniq)
@@ -1401,17 +1402,53 @@
      ; (log instrs)
      ; (log liveness)
      ; (log graph)
-     (log allocs)
+     ; (log allocs)
      ; (log lower-if)
-     (log patched)
-      ; (log x86)
-      1
+     ; (log patched)
+      (log x86)
+      ; 1
     )))
 
 (run 
     '(program
- (define (id [x : Integer]) : Integer x)
- (id 42)
+
+(define (minus [n : Integer] [m : Integer]) : Integer
+  (+ n (- m)))
+
+(define (zero [x : Integer]) : (Vector)
+  (if (eq? x 0)
+      (vector)
+      (zero (minus (vector-ref (vector x) 0) 1))))
+
+(define (one [x : Integer]) : (Vector (Vector) Integer)
+  (if (eq? x 0)
+      (vector (zero 20) 42)
+      (one (minus (vector-ref (vector x) 0) 1))))
+
+(define (two [x : Integer]) : (Vector (Vector) Integer (Vector (Vector) Integer))
+  (if (eq? x 0)
+      (vector (zero 20) 42 (one 20))
+      (two (minus (vector-ref (vector x) 0) 1))))
+
+(define (three [x : Integer]) : (Vector (Vector) Integer (Vector (Vector) Integer) (Vector (Vector) Integer (Vector (Vector) Integer)))
+  (if (eq? x 0)
+      (vector (zero 20) 42 (one 20) (two 20))
+      (three (minus (vector-ref (vector x) 0) 1))))
+
+(vector-ref
+ (vector-ref
+  (vector-ref
+   (vector-ref
+    (vector (zero 20) 42 (one 20) (two 20) (three 20))
+    4)
+   3)
+  2)
+ 1)
+
+
+
+
+
 
 
   ))
