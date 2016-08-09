@@ -907,9 +907,9 @@
                             (car elss-before)
                             (free-var e1)
                             (free-var e2))))]
-      [`(define (,fname) ,num-params (,vars-types ,max-stack) ,instrs ...)
+      [`(define (,fname) ,num-params (,vars-types ,max-stack-args) ,instrs ...)
        (define-values (new-instrs new-live-after) ((liveness (set)) instrs #f))
-       `(define (,fname) ,num-params ((,vars-types ,max-stack) ,(cdr new-live-after)) ,@new-instrs)]                            
+       `(define (,fname) ,num-params ((,vars-types ,max-stack-args) ,(cdr new-live-after)) ,@new-instrs)]                            
       [else
        (values e (set-union (set-subtract live-after
                                           (write-vars e))
@@ -933,14 +933,14 @@
                            ((build-interference live-after graph mgraph vars-types) inst))])
             `(program (,vars-types ,graph ,mgraph) (type ,t) (defines ,@new-fun-defs) ,@new-instrs)))]
        
-       [`(define (,fname) ,num-params ((,vars-types ,max-stack) ,lives) ,instrs ...)
+       [`(define (,fname) ,num-params ((,vars-types ,max-stack-args) ,lives) ,instrs ...)
         (let* ([vars* (map (lambda (var-type) (car var-type)) vars-types)]
                [graph (make-graph vars*)]
                [mgraph (make-graph vars*)])          
           (let ([new-instrs
                  (for/list ([inst instrs] [live-after lives])
                            ((build-interference live-after graph mgraph vars-types) inst))])
-            `(define (,fname) ,num-params (,vars-types ,max-stack ,graph ,mgraph) ,@new-instrs)))]
+            `(define (,fname) ,num-params (,vars-types ,max-stack-args ,graph ,mgraph) ,@new-instrs)))]
         
         [(or `(movq ,src ,dst) `(movzbq ,src ,dst))
          (begin
@@ -1152,15 +1152,26 @@
 
 (define allocate-registers
   (lambda (ast)
+    
+    (define (helper graph mgraph vars-types)
+      (define annotated-graph (annotate graph))
+      (define color-map ((color-graph annotated-graph mgraph)
+                         (map (lambda (var) (car var)) vars-types)))
+      (define-values (homes stack-size root-size) (reg-spill vars-types color-map))
+      (values homes stack-size root-size))
+    
     (match ast
       [`(program (,vars-types ,graph ,mgraph) (type ,t) (defines ,fun-defs ...) ,instrs ...)
-       (let* ([annot-graph (annotate graph)]
-              [color-map ((color-graph annot-graph mgraph) 
-                          (map (lambda (var) (car var)) vars-types))])
-        (let-values ([(reg-map stk-size root-size) (reg-spill vars-types color-map)])
-          `(program (,stk-size ,root-size) (type ,t)
-                    (defines ,@fun-defs)
-                     ,@(map (assign-homes reg-map) instrs))))]
+       (define-values (homes stack-size root-size) (helper graph mgraph vars-types))
+       `(program (,stack-size ,root-size) (type ,t)
+                 (defines ,@fun-defs)
+                 ,@(map (assign-homes homes) instrs))]
+      [`(define (,fname) ,num-params (,vars-types ,max-stack-args ,graph ,mgraph) ,instrs ...)
+       (define-values (homes stack-size root-size) (helper graph mgraph vars-types))
+       (define adjust-stack-size
+         (align (+ (* max-stack-args 8) stack-size) 16))
+       `(define (,fname) ,num-params (,adjust-stack-size ,rootstack-reg) ,@(map (assign-homes homes) instrs))]
+       
       [else (error "allocate-registers could not match " ast)])))
 
 
@@ -1393,11 +1404,11 @@
       1
     )))
 
-(run 
-    '(program
-(vector 42 )
+; (run 
+;     '(program
+; (vector 42 )
 
-  ))
+;   ))
 
 (define interp (new interp-R3))
 (define interp-F (send interp interp-F '()))
