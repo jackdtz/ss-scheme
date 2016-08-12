@@ -12,6 +12,15 @@
 ;; utilities for the whole compiler
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+(define replace-dash
+  (lambda (f-name)
+    (string->symbol (string-replace (symbol->string f-name) "-" "_"))))
+
+(define (write-to-file path ss)
+  (define out (open-output-file path #:exists 'replace))
+  (pretty-display ss out)
+  (close-output-port out))
+
 (define pretty-display-color-map
   (lambda (color-map)
     (define new-lst
@@ -56,7 +65,7 @@
        'vector-set!))
 
 (define instruction-set
-  (set 'addq 'negq 'movq 'subq 'movzbq 'cmpq 'xorq 'andq 'leaq))
+  (set 'addq 'negq 'movq 'subq 'movzbq 'cmpq 'xorq 'andq))
 
 (define prettify-fun-type
   (lambda (type)
@@ -1116,6 +1125,13 @@
             
             `(,var . ,home))
         vars-types)))
+    
+    ; (cond [(= 0 num-of-root-spill) 
+    ;        (pretty-display vars-types)
+    ;        (pretty-display color-map)
+    ;        (newline)
+    ;        ])
+    
     (values homes
             (align (* word-size num-of-stack-spill) 16)
             (align (* word-size num-of-root-spill) 16))))
@@ -1136,6 +1152,7 @@
         [`(byte-reg ,r) `(byte-reg ,r)]
         [`(callq ,f) `(callq ,f)]
         [`(set ,cc ,arg) `(set ,cc ,(recur arg))]
+        [`(leaq ,src ,dst) `(leaq ,(recur src) ,(recur dst))]
         [`(,cmp-op ,e1 ,e2) #:when (set-member? cmp-instructions cmp-op)
          `(,cmp-op ,(recur e1) ,(recur e2))]
         [`(,instr ,src ,dst)
@@ -1240,6 +1257,11 @@
        (cmpq (int ,e1) (reg rax)))]
     [`(cmpq (reg ,r) (int ,i))
      `((cmpq (int ,i) (reg ,r)))]
+    [`(leaq ,src ,dst)
+     (cond [(in-memory? dst)
+            `((leaq ,src (reg rax))
+              (movq (reg rax) ,dst))]
+           [else `(,e)])]
     [`(movq ,src ,dst)
      (cond [(equal? src dst) '()]
            [(and (in-memory? src) (in-memory? dst))
@@ -1250,6 +1272,7 @@
      (cond [(and (in-memory? src) (in-memory? dst))
             `((movq ,src (reg rax)) (,instr (reg rax) ,dst))]
            [else `((,instr ,src ,dst))])]
+    
     [else `(,e)])))
 
 
@@ -1260,9 +1283,9 @@
   (lambda (e)
     (match e
       [`(global-value ,label)
-       (format "~a(%rip)" (label-name (symbol->string label)))]
+       (format "~a(%rip)" (label-name (symbol->string (replace-dash label))))]
       [`(deref ,reg ,r) (format "~a(%~a)" r reg)]
-      [`(function-ref ,label) (format "~a(%rip)" label)]
+      [`(function-ref ,label) (format "~a(%rip)" (replace-dash label))]
       [`(stack-arg ,offset) (format "~a(%rsp)\n" offset)]
       [`(indirect-callq ,f) (format "\tcallq\t*~a\n" (print-x86 f))]
       [`(int ,n) (format "$~a" n)]
@@ -1271,6 +1294,7 @@
       [`(jmp-if ,cc ,label) (format "\tj~a\t~a\n" cc (symbol->string label))]
       [`(jmp ,label) (format "\tjmp\t~a\n" (symbol->string label))]
       [`(label ,label) (format "\n~a:\n" (symbol->string label))]
+      [`(leaq ,src ,dst) (format "\tleaq\t~a,\t~a\n" (print-x86 src) (print-x86 dst))]
       [`(callq ,f)
        (format "\tcallq\t~a\n" (label-name (symbol->string f)))]
       [`(,instr ,src ,dst)
@@ -1300,11 +1324,11 @@
            (for/list ([i (range (/ root-size 8))])
              (string-append
                (format "\tmovq\t$0, (%~a)\n" rootstack-reg)
-               (format "\taddq\t$~a, (%~a)\n" 8 rootstack-reg)))))
+               (format "\taddq\t$~a, %~a\n" 8 rootstack-reg)))))
        
        (string-append
-         (format "\t.globl ~a\n" fname)
-         (format "~a:\n" fname)
+         (format "\t.globl ~a\n" (replace-dash fname))
+         (format "~a:\n" (replace-dash fname))
          (format "\tpushq\t%rbp\n")
          (format "\tmovq\t%rsp, %rbp\n")
          save-callee-regs
@@ -1403,47 +1427,86 @@
      ; (log liveness)
      ; (log graph)
      ; (log allocs)
-     ; (log lower-if)
+     (log lower-if)
      ; (log patched)
-      (log x86)
+      ; (log x86)
       ; 1
+
+     ; (write-to-file "test.s" x86)
     )))
 
-(run 
+#;(run 
     '(program
 
-(define (minus [n : Integer] [m : Integer]) : Integer
-  (+ n (- m)))
+(define (minus [m : Integer] [n : Integer]) : Integer
+  (+ m (- n)))
 
-(define (zero [x : Integer]) : (Vector)
-  (if (eq? x 0)
-      (vector)
-      (zero (minus (vector-ref (vector x) 0) 1))))
+(define (z [i : Integer]) : (Vector Integer)
+  (if (eq? i 0)
+      (vector 42)
+      (let ([junk (vector (vector 1) (vector 2) (vector 3) (vector 4) (vector 5))])
+        (let ([garbage (vector -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1)])
+          (let ([more (vector junk garbage junk garbage junk garbage junk garbage)])
+            (z (minus i 1)))))))
 
-(define (one [x : Integer]) : (Vector (Vector) Integer)
-  (if (eq? x 0)
-      (vector (zero 20) 42)
-      (one (minus (vector-ref (vector x) 0) 1))))
+(define (o [i : Integer] [v : (Vector Integer)]) : (Vector (Vector Integer))
+  (if (eq? i 0)
+      (vector v)
+      (let ([junk (vector (vector 1) (vector 2) (vector 3) (vector 4) (vector 5))])
+        (let ([garbage (vector -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1)])
+          (let ([more (vector junk garbage junk garbage junk garbage junk garbage)])
+            (o (minus i 1) v))))))
 
-(define (two [x : Integer]) : (Vector (Vector) Integer (Vector (Vector) Integer))
-  (if (eq? x 0)
-      (vector (zero 20) 42 (one 20))
-      (two (minus (vector-ref (vector x) 0) 1))))
+(define (t [i : Integer] [v : (Vector (Vector Integer))])
+  : (Vector (Vector (Vector Integer)))
+  (if (eq? i 0)
+      (vector v)
+      (let ([junk (vector (vector 1) (vector 2) (vector 3) (vector 4) (vector 5))])
+        (let ([garbage (vector -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1)])
+          (let ([more (vector junk garbage junk garbage junk garbage junk garbage)])
+            (t (minus i 1) v))))))
 
-(define (three [x : Integer]) : (Vector (Vector) Integer (Vector (Vector) Integer) (Vector (Vector) Integer (Vector (Vector) Integer)))
-  (if (eq? x 0)
-      (vector (zero 20) 42 (one 20) (two 20))
-      (three (minus (vector-ref (vector x) 0) 1))))
+(define (h [i : Integer] [v : (Vector (Vector (Vector Integer)))])
+  : (Vector (Vector (Vector (Vector Integer))))
+  (if (eq? i 0)
+      (vector v)
+      (let ([junk (vector (vector 1) (vector 2) (vector 3) (vector 4) (vector 5))])
+        (let ([garbage (vector -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1)])
+          (let ([more (vector junk garbage junk garbage junk garbage junk garbage)])
+            (h (minus i 1) v))))))
+
+(define (f [i : Integer] [v : (Vector (Vector (Vector (Vector Integer))))])
+  : (Vector (Vector (Vector (Vector (Vector Integer)))))
+  (if (eq? i 0)
+      (vector v)
+      (let ([junk (vector (vector 1) (vector 2) (vector 3) (vector 4) (vector 5))])
+        (let ([garbage (vector -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1)])
+          (let ([more (vector junk garbage junk garbage junk garbage junk garbage)])
+            (f (minus i 1) v))))))
+
+(define (e [i : Integer] [v : (Vector (Vector (Vector (Vector (Vector Integer)))))])
+  : (Vector (Vector (Vector (Vector (Vector (Vector Integer))))))
+  (if (eq? i 0)
+      (vector v)
+      (let ([junk (vector (vector 1) (vector 2) (vector 3) (vector 4) (vector 5))])
+        (let ([garbage (vector -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1)])
+          (let ([more (vector junk garbage junk garbage junk garbage junk garbage)])
+            (e (minus i 1) v))))))
+
 
 (vector-ref
  (vector-ref
   (vector-ref
    (vector-ref
-    (vector (zero 20) 42 (one 20) (two 20) (three 20))
-    4)
-   3)
-  2)
- 1)
+    (vector-ref
+     (vector-ref
+      (e 20 (f 20 (h 20 (t 20 (o 20 (z 20))))))
+      0)
+     0)
+    0)
+   0)
+  0)
+ 0)
 
 
 

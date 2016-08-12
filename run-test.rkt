@@ -9,8 +9,8 @@
 ;; prior to giving run-tests a command line interfaces.
 (define suite-list
   `((0 . ,(range 1 28))
-    (1 . ,(range 1 37))
-    (2 . ,(range 1 21))
+    (1 . ,(range 1 65))
+    (2 . ,(range 1 44))
     (3 . ,(range 1 20))
     (4 . ,(range 0 8))
     (6 . ,(range 0 10))
