@@ -136,7 +136,7 @@ void collect(int64_t** rootstack_ptr, uint64_t bytes_requested)
   assert(initialized);
 
 
-  // printf("rootstack_ptr: %" PRId64 "\t rootstack_begin: %" PRId64 "\n", (long long)rootstack_ptr, (long long)rootstack_begin);
+  printf("rootstack_ptr: %" PRId64 "\t rootstack_begin: %" PRId64 "\n", (long long)rootstack_ptr, (long long)rootstack_begin);
   assert(rootstack_ptr >= rootstack_begin);
   assert(rootstack_ptr < rootstack_end);
   

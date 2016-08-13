@@ -1262,6 +1262,8 @@
             `((leaq ,src (reg rax))
               (movq (reg rax) ,dst))]
            [else `(,e)])]
+    ; [`(movq (int 0) (reg ,r))
+    ;  `((xorq (reg ,r) (reg ,r)))]
     [`(movq ,src ,dst)
      (cond [(equal? src dst) '()]
            [(and (in-memory? src) (in-memory? dst))
@@ -1297,9 +1299,11 @@
       [`(leaq ,src ,dst) (format "\tleaq\t~a,\t~a\n" (print-x86 src) (print-x86 dst))]
       [`(callq ,f)
        (format "\tcallq\t~a\n" (label-name (symbol->string f)))]
+      [`(movq (int 0) ,(and dst `(reg ,r)))
+       (format "\txorq\t~a,\t~a\n" (print-x86 dst) (print-x86 dst))]
       [`(,instr ,src ,dst)
        #:when (set-member? instruction-set instr)
-       (format "\t~a\t~a, ~a\n" instr 
+       (format "\t~a\t~a,\t~a\n" instr 
                                 (print-x86 src)
                                 (print-x86 dst))]
       [`(,instr ,dst)
@@ -1427,9 +1431,9 @@
      ; (log liveness)
      ; (log graph)
      ; (log allocs)
-     (log lower-if)
-     ; (log patched)
-      ; (log x86)
+     ; (log lower-if)
+     (log patched)
+      (log x86)
       ; 1
 
      ; (write-to-file "test.s" x86)
@@ -1438,75 +1442,8 @@
 #;(run 
     '(program
 
-(define (minus [m : Integer] [n : Integer]) : Integer
-  (+ m (- n)))
-
-(define (z [i : Integer]) : (Vector Integer)
-  (if (eq? i 0)
-      (vector 42)
-      (let ([junk (vector (vector 1) (vector 2) (vector 3) (vector 4) (vector 5))])
-        (let ([garbage (vector -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1)])
-          (let ([more (vector junk garbage junk garbage junk garbage junk garbage)])
-            (z (minus i 1)))))))
-
-(define (o [i : Integer] [v : (Vector Integer)]) : (Vector (Vector Integer))
-  (if (eq? i 0)
-      (vector v)
-      (let ([junk (vector (vector 1) (vector 2) (vector 3) (vector 4) (vector 5))])
-        (let ([garbage (vector -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1)])
-          (let ([more (vector junk garbage junk garbage junk garbage junk garbage)])
-            (o (minus i 1) v))))))
-
-(define (t [i : Integer] [v : (Vector (Vector Integer))])
-  : (Vector (Vector (Vector Integer)))
-  (if (eq? i 0)
-      (vector v)
-      (let ([junk (vector (vector 1) (vector 2) (vector 3) (vector 4) (vector 5))])
-        (let ([garbage (vector -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1)])
-          (let ([more (vector junk garbage junk garbage junk garbage junk garbage)])
-            (t (minus i 1) v))))))
-
-(define (h [i : Integer] [v : (Vector (Vector (Vector Integer)))])
-  : (Vector (Vector (Vector (Vector Integer))))
-  (if (eq? i 0)
-      (vector v)
-      (let ([junk (vector (vector 1) (vector 2) (vector 3) (vector 4) (vector 5))])
-        (let ([garbage (vector -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1)])
-          (let ([more (vector junk garbage junk garbage junk garbage junk garbage)])
-            (h (minus i 1) v))))))
-
-(define (f [i : Integer] [v : (Vector (Vector (Vector (Vector Integer))))])
-  : (Vector (Vector (Vector (Vector (Vector Integer)))))
-  (if (eq? i 0)
-      (vector v)
-      (let ([junk (vector (vector 1) (vector 2) (vector 3) (vector 4) (vector 5))])
-        (let ([garbage (vector -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1)])
-          (let ([more (vector junk garbage junk garbage junk garbage junk garbage)])
-            (f (minus i 1) v))))))
-
-(define (e [i : Integer] [v : (Vector (Vector (Vector (Vector (Vector Integer)))))])
-  : (Vector (Vector (Vector (Vector (Vector (Vector Integer))))))
-  (if (eq? i 0)
-      (vector v)
-      (let ([junk (vector (vector 1) (vector 2) (vector 3) (vector 4) (vector 5))])
-        (let ([garbage (vector -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1)])
-          (let ([more (vector junk garbage junk garbage junk garbage junk garbage)])
-            (e (minus i 1) v))))))
-
-
-(vector-ref
- (vector-ref
-  (vector-ref
-   (vector-ref
-    (vector-ref
-     (vector-ref
-      (e 20 (f 20 (h 20 (t 20 (o 20 (z 20))))))
-      0)
-     0)
-    0)
-   0)
-  0)
- 0)
+(let ([x #f])
+  42)
 
 
 
