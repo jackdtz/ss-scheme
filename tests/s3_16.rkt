@@ -60,7 +60,7 @@
    (vector-ref
     (vector-ref
      (vector-ref
-      (e 20 (f 20 (h 20 (t 20 (o 20 (z 20))))))
+      (e 20 (f 20 (h 20 (t 20 (o 20 (z 1))))))
       0)
      0)
     0)

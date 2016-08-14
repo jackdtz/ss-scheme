@@ -11,7 +11,7 @@
   `((0 . ,(range 1 28))
     (1 . ,(range 1 65))
     (2 . ,(range 1 44))
-    (3 . ,(range 1 20))
+    (3 . ,(range 1 34))
     (4 . ,(range 0 8))
     (6 . ,(range 0 10))
     (7 . ,(range 0 9))
@@ -44,7 +44,7 @@
 ;; running and testing them.
 (define compiler-list
   ;; Name           Typechecker                   Compiler-Passes      Initial interpreter  Valid suites
- `(("compiler"     ,(type-check (void) (void))    ,passes              ,interp-scheme          (0 1 2))
+ `(("compiler"     ,(type-check (void) (void))    ,passes              ,interp-scheme          (3))
   ; `(("conditionals"  ,#f                       ,passes               ,interp-scheme       "s2"         ,(cdr (assq 0 suite-list)))
     ))
 

@@ -41,8 +41,9 @@
     (define new-graph* (sort new-graph #:key car string<?))
     (pretty-display new-graph*)))
     
-
-(define first-offset 8)
+(define number-callee-saves (length (set->list callee-save)))
+    
+(define function-first-offset (+ 8 (* 8 number-callee-saves)))
 
 (define para-registers
   (list 'rdi 'rsi 'rdx 'rcx 'r8 'r9))
@@ -967,7 +968,7 @@
            (for ([v live-after])
                 (for ([r caller-save] #:when (not (equal? v r)))
                      (add-edge graph v r)))
-           ; TODO: write comment the following code block
+           ; TODO: write comment for the following code block
            (for ([v live-after])
              (cond [(and (not (set-member? registers v))
                          (is-vector? (cdr (assq v vars-types))))
@@ -1120,18 +1121,11 @@
                     [else
                      (define i num-of-stack-spill)
                      (set! num-of-stack-spill (add1 i))
-                     `(deref rbp ,(- (* word-size
-                                        (+ 1 (- var-color-index reg-len)))))]))
+                     `(deref rbp ,(- (+ function-first-offset
+                                        (* i word-size))))]))
             
             `(,var . ,home))
         vars-types)))
-    
-    ; (cond [(= 0 num-of-root-spill) 
-    ;        (pretty-display vars-types)
-    ;        (pretty-display color-map)
-    ;        (newline)
-    ;        ])
-    
     (values homes
             (align (* word-size num-of-stack-spill) 16)
             (align (* word-size num-of-root-spill) 16))))
@@ -1188,17 +1182,24 @@
                  ,@(map (assign-homes homes) instrs))]
       [`(define (,fname) ,num-params (,vars-types ,max-stack-args ,graph ,mgraph) ,instrs ...)
        (define-values (homes stack-size root-size) (helper graph mgraph vars-types))
+       ; (pretty-display-color-map homes)
        (define adjust-stack-size
          (align (+ (* max-stack-args 8) stack-size) 16))
        `(define (,fname) ,num-params (,adjust-stack-size ,root-size) ,@(map (assign-homes homes) instrs))]
        
       [else (error "allocate-registers could not match " ast)])))
 
-
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; lower-conditionals ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
                              
 (define lower-conditionals
   (lambda (ast)
+    
+    (define append-number
+      (lambda (symbol int)
+        (string->symbol 
+          (string-append (symbol->string symbol)
+                         (number->string int)))))
+    
     (match ast
       [`(program (,stk-size ,root-size) (type ,t) (defines ,fun-defs ...) ,instrs ...)
        `(program (,stk-size ,root-size) (type ,t) (defines ,@(map lower-conditionals fun-defs)) 
@@ -1206,9 +1207,10 @@
       [`(define (,fname) ,num-params (,stack-size ,root-size) ,instrs ...)
        `(define (,fname) ,num-params (,stack-size ,root-size) ,@(append* (map lower-conditionals instrs)))]
       [`(if (,cmp-op ,e1 ,e2) ,thns ,elss)
-       (let ([thenlabel (gensym 'then.)]
-             [elselabel (gensym 'else.)]
-             [endlabel (gensym 'end.)])
+       (define random-int (random 100000000))
+       (let ([thenlabel (append-number 'then. random-int)]
+             [elselabel (append-number 'else. random-int)]
+             [endlabel (append-number 'end. random-int)])
        `((cmpq ,e2 ,e1)
          (jmp-if ,(cmp-op->instr cmp-op) ,thenlabel)
          ,@(append* (map lower-conditionals elss))
@@ -1218,7 +1220,6 @@
          (label ,endlabel)))]
       [else `(,ast)])))
 
-        
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;; patch-instructions ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ; The purpose of this pass is to make sure that each instruction adheres to
@@ -1262,8 +1263,7 @@
             `((leaq ,src (reg rax))
               (movq (reg rax) ,dst))]
            [else `(,e)])]
-    ; [`(movq (int 0) (reg ,r))
-    ;  `((xorq (reg ,r) (reg ,r)))]
+    [(or `(addq (int 0) ,dst) `(subq (int 0) ,dst)) '()]
     [`(movq ,src ,dst)
      (cond [(equal? src dst) '()]
            [(and (in-memory? src) (in-memory? dst))
@@ -1277,10 +1277,7 @@
     
     [else `(,e)])))
 
-
-
 ;;;;;;;;;;;;;;;;;;;;;;;;;;; print-x86 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-   
 (define print-x86
   (lambda (e)
     (match e
@@ -1300,10 +1297,10 @@
       [`(callq ,f)
        (format "\tcallq\t~a\n" (label-name (symbol->string f)))]
       [`(movq (int 0) ,(and dst `(reg ,r)))
-       (format "\txorq\t~a,\t~a\n" (print-x86 dst) (print-x86 dst))]
+       (format "\txorq\t~a, ~a\n" (print-x86 dst) (print-x86 dst))]
       [`(,instr ,src ,dst)
        #:when (set-member? instruction-set instr)
-       (format "\t~a\t~a,\t~a\n" instr 
+       (format "\t~a\t~a, ~a\n" instr 
                                 (print-x86 src)
                                 (print-x86 dst))]
       [`(,instr ,dst)
@@ -1350,7 +1347,6 @@
          )]
       
       [`(program (,stk-size ,root-size) (type ,t) (defines ,fun-defs ...) ,instrs ...)
-       
        (define all-fun-x86
          (string-append*
            (map print-x86 fun-defs)))
@@ -1389,8 +1385,6 @@
          (string-append* (map print-x86 instrs))
          "\n"
          (print-by-type t)
-         ; (format "\tmovq\t%rax, %rdi\n")
-         ; (format "\tcallq\t~a\n" (label-name "print_int"))
          (format "\tmovq\t$0, %rax\n")
          (format "\taddq\t$~a, %rsp\n" stk-size)
          (string-append* (map
@@ -1432,64 +1426,14 @@
      ; (log graph)
      ; (log allocs)
      ; (log lower-if)
-     (log patched)
-      (log x86)
+     ; (log patched)
+      ; (log x86)
       ; 1
 
-     ; (write-to-file "test.s" x86)
+     (write-to-file "test.s" x86)
     )))
 
-#;(run 
+(run 
     '(program
 
-(let ([x #f])
-  42)
-
-
-
-
-
-
-
-  ))
-
-(define interp (new interp-R3))
-(define interp-F (send interp interp-F '()))
-        
-(define test-passes
-    (list
-     `("uniquify"                ,(uniquify '())                                   ,interp-scheme)
-     `("reveal-functions"        ,(reveal-functions '())                           ,interp-F)
-     `("expose allocation"       ,expose-allocation                                ,interp-F)
-     `("flatten"                 ,(flatten #f)                                     ,interp-C)
-     `("instruction selection"   ,select-instructions                              ,interp-x86)
-     `("liveness analysis"       ,(uncover-live (void))                            ,interp-x86)
-     `("build interference"      ,(build-interference (void) (void) (void) (void)) ,interp-x86)
-     `("allocate register"     ,allocate-registers                                 ,interp-x86) 
-     `("lower-conditionals"    ,lower-conditionals                               ,interp-x86)
-     `("patch-instructions"     ,patch-instructions                                ,interp-x86)
-     `("x86"                    ,print-x86                                          #f)
-     ))
-
-(define suite-list
-  `((0 . ,(range 1 28))
-    (1 . ,(range 1 37))
-    (2 . ,(range 1 21))
-    (3 . ,(range 1 20))
-    (4 . ,(range 0 8))
-    (6 . ,(range 0 10))
-    (7 . ,(range 0 9))
-    ))
-
-(define compiler-list
-  ;; Name           Typechecker                     Compiler-Passes      Initial interpreter   Test-name    Valid suites
-  `(("conditionals"  ,(type-check (void) (void))    ,test-passes          ,interp-scheme       "s3"         ,(cdr (assq 3 suite-list)))
-    
-    ))
-
-; (begin
-;    (for ([test compiler-list])
-;     (apply interp-tests test))
-;    (pretty-display "all passed"))
-
- 
+))
