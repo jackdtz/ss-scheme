@@ -136,6 +136,18 @@
   (lambda (env fenv)
     (lambda (ast)
       (define recur (type-check env fenv))
+      
+  (define update-env-fenv
+    (lambda (vars types env fenv)
+      (define updated-env-fenv
+             (foldl (lambda (var type env-fenv)
+                      (define env (car env-fenv))
+                      (define fenv (cdr env-fenv))
+                      (match type
+                        [`(,args ... -> ,ret) (cons env (type-check-add-f-env fenv var type))]
+                        [else (cons (type-check-add-env env var type) fenv)]))
+                    (cons env fenv) vars types))
+      (values (car updated-env-fenv) (cdr updated-env-fenv))))
 
       (match ast
         [`(program ,(and fun-defs
@@ -151,6 +163,7 @@
          (define env* (hash))
          (let-values ([(body-e body-type) ((type-check env* fenv*) body)])
            `(program (type ,body-type) ,@(map (lambda (def) ((type-check env* fenv*) def)) fun-defs) ,body-e))]
+
         
         ['(read) (values `(has-type (read) Integer) 'Integer)]
         [(? fixnum?) (values `(has-type ,ast Integer) 'Integer)]
@@ -286,13 +299,32 @@
            [else
             ; (display (format "vector: ~a" vec-ty))
             (error (format "expected a vector type in vector-set!, not ~a in ~a" vec-ty ast))])]
+
+
+        ; lambda
+        [`(lambda: ([,vars : ,types] ...) : ,ret-type ,body)
+        (define updated-env-fenv
+           (foldl (lambda (var type env-fenv)
+                    (define env (car env-fenv))
+                    (define fenv (cdr env-fenv))
+                    (match type
+                      [`(,args ... -> ,ret) (cons env (type-check-add-f-env fenv var type))]
+                      [else (cons (type-check-add-env env var type) fenv)]))
+                  (cons env fenv) vars types))
+
+         (define env* (car updated-env-fenv))
+         (define fenv* (cdr updated-env-fenv))
+         (define-values (body-e body-type) ((type-check env* fenv*) body))
+         (unless (equal? ret-type body-type)
+           (error (format "body type: ~a and return type: ~a mismatch for lambda function ~a\n current env: ~a \n current fenv: ~a"
+                          body-type ret-type ast env fenv)))
+         `(lambda: (,@args) : ,ret-type ,,body-e)]
         
         ; function
         [`(define (,fun-name [,vars : ,types] ...) : ,ret-type ,body)
          
          (define updated-env-fenv
            (foldl (lambda (var type env-fenv)
-
                     (define env (car env-fenv))
                     (define fenv (cdr env-fenv))
                     (match type
@@ -329,6 +361,8 @@
            [else
             (error "function type error" ast)])]
         ))))
+
+
 
 
 
@@ -1451,3 +1485,81 @@
 ;     '(program
 
 ; ))
+
+
+(define convert-to-closure
+  (lambda (e)
+
+    (define orall
+      (lambda (lst)
+        (cond
+          [(null? lst) #f] 
+          [(car lst) #t]
+          [else (orall (cdr lst))])))
+
+    (define occurs-free?
+      (lambda (x exp)
+        (match exp
+          [(? symbol?) (eqv? x exp)]
+          [`(lambda: ([,vars : ,types] ...) : ,ret-type ,body)
+          (and (not (member? vars x))
+               (occurs-free? x body))]
+          [`(,op ,es ...)
+          (or (occurs-free? x op)
+              (orall (map (lambda (e) (occurs-free? x e)) es)))])))
+
+    (define collect-vars
+      (lambda (exp)
+        (define (collector exp vars)
+          (match exp
+            [(? symbol?) (set-add vars exp)]
+            [()]))))
+
+
+    (match e
+      [`(program (type ,t) ,(and fun-defs `(define (,fun-names ,args ...) : ,rets ,fbody)) ... ,body)
+       
+      ]
+      [`(lambda: ,(and args `[,vars : ,types] ...) : ,ret-type ,body)
+       (define lambda-name (gensym 'lambda.))
+       (define all-vars (collect-vars body))
+       (define free-vars (filter (lambda (var) (occurs-free? var body)) all-vars))
+       (define closure `(vector ,lambda-name ,@free-vars))
+       (define let-bindings
+          (foldl (lambda ())))
+
+       (values `(vector ,lambda-name ,@free-vars)
+               `(define (,lambda-name [clos : _] ,@args) : ,ret-type
+                  (let ([]))))
+      ]
+      [(? symbol?) ]
+      [(? integer?) ]
+      [(? boolean?) ]
+      [`(void) ]
+      [`(has-type ,e ,t) `(has-type ,(recur e) ,t)]
+      [`(if ,(app recur cnd) 
+            ,(app recur thn)
+            ,(app recur els))
+       `(if ,cnd ,thn ,els)]
+      [`(and ,(app recur e1)
+             ,(app recur e2))
+       `(and ,e1 ,e2)]
+      [`(,op ,es ...) #:when (or (set-member? vec-primitive-set op)
+                                 (set-member? primitive-set op))
+                      (define new-es (map recur es))
+                      `(,op ,@new-es)]
+      [`(,(and fname `(has-type ,e ,t)) ,es ...)
+       `(app ,(recur fname) ,@(map recur es))]
+      [`(let ([,x ,(app recur rhs)]) 
+          ,(app recur body))
+       `(let ([,x ,rhs]) ,body)]
+      [`(define (,fun-name ,args ...) : ,ret-type ,fbody)
+       `(define (,fun-name ,@args) : ,ret-type ,(recur fbody))]
+      [else
+       (error "in reveal-functions, unmatched" e)])
+
+
+
+
+
+  
