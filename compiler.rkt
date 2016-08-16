@@ -1237,7 +1237,7 @@
 
 (define patch-instructions
  (lambda (e)
-
+ 
   (define in-memory?
    (lambda (x)
     (match x
@@ -1246,7 +1246,7 @@
       [`(stack-arg ,offset) #t]
       [`(function-ref ,name) #t]
      [else #f])))
-
+     
   (match e
     [`(program (,stk-size ,root-size) (type ,t) (defines ,fun-defs ...) ,instr ...)
     `(program (,stk-size ,root-size) (type ,t) (defines ,@(map patch-instructions fun-defs)) 
@@ -1280,6 +1280,18 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;; print-x86 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (define print-x86
   (lambda (e)
+
+    (define (updata-stack op)
+      (lambda (stack-size)
+        (if (= 0 stack-size)
+            ""
+            (match op
+              ['addq (format "\taddq\t$~a, %rsp\n" stack-size)]
+              ['subq (format "\tsubq\t$~a, %rsp\n" stack-size)]
+              [else (error "update-stack could not match " op)]))))
+    (define subtract-stack (updata-stack 'subq))
+    (define add-stack (updata-stack 'addq))
+    
     (match e
       [`(global-value ,label)
        (format "~a(%rip)" (label-name (symbol->string (replace-dash label))))]
@@ -1333,12 +1345,12 @@
          (format "\tpushq\t%rbp\n")
          (format "\tmovq\t%rsp, %rbp\n")
          save-callee-regs
-         (format "\tsubq\t$~a, %rsp\n" stack-size)
+         (subtract-stack stack-size)
          initialize-roots
          "\n"
          (string-append* (map print-x86 instrs))
          "\n"
-         (format "\taddq\t$~a, %rsp\n" stack-size)
+         (add-stack stack-size)
          restore-callee-regs
          (format "\tsubq\t$~a, %~a\n" root-size rootstack-reg)
          (format "\tpopq\t%rbp\n")
@@ -1378,7 +1390,7 @@
                           (lambda (reg)
                             (format "\tpushq\t%~a\n" reg))
                           (set->list callee-save)))
-         (format "\tsubq\t$~a, %rsp\n" stk-size)
+         (subtract-stack stk-size)
          initialize-heaps
          initialize-roots
          "\n"
@@ -1386,15 +1398,17 @@
          "\n"
          (print-by-type t)
          (format "\tmovq\t$0, %rax\n")
-         (format "\taddq\t$~a, %rsp\n" stk-size)
+         (add-stack stk-size)
          (string-append* (map
                           (lambda (reg)
                             (format "\tpopq\t%~a\n" reg))
                           (reverse (set->list callee-save))))
          (format "\tpopq\t%rbp\n")
          (format "\tretq\n"))]
-      
       [else (error "print-x86 unmatched " e)])))
+
+
+
 
 (define run
   (lambda (e)    
@@ -1433,7 +1447,7 @@
      (write-to-file "test.s" x86)
     )))
 
-(run 
-    '(program
+; (run 
+;     '(program
 
-))
+; ))

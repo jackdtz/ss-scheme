@@ -4,6 +4,9 @@
 (require "compiler.rkt")
 (require "utilities/runtime-config.rkt")
 
+(define interp (new interp-R3))
+(define interp-F (send interp interp-F '()))
+
 
 ;; This list serves the same function as the range definitions that were used
 ;; prior to giving run-tests a command line interfaces.
@@ -44,7 +47,7 @@
 ;; running and testing them.
 (define compiler-list
   ;; Name           Typechecker                   Compiler-Passes      Initial interpreter  Valid suites
- `(("compiler"     ,(type-check (void) (void))    ,passes              ,interp-scheme          (3))
+ `(("compiler"     ,(type-check (void) (void))    ,passes              ,interp-scheme          (0 1 2 3))
   ; `(("conditionals"  ,#f                       ,passes               ,interp-scheme       "s2"         ,(cdr (assq 0 suite-list)))
     ))
 
