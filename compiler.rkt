@@ -318,7 +318,10 @@
          (unless (equal? ret-type body-type)
            (error (format "body type: ~a and return type: ~a mismatch for lambda function ~a\n current env: ~a \n current fenv: ~a"
                           body-type ret-type ast env fenv)))
-         `(lambda: (,@args) : ,ret-type ,,body-e)]
+         (define args (map (lambda (var type) `(,var : ,type)) vars types))
+         (define lambda-type `(,@types -> ,ret-type))
+         (values `(has-type (lambda: (,@args) : ,ret-type ,body-e) ,lambda-type)
+                 lambda-type)]
         
         ; function
         [`(define (,fun-name [,vars : ,types] ...) : ,ret-type ,body)
@@ -378,6 +381,16 @@
   (lambda (env)
     (lambda (e)
       (define recur (uniquify env))
+
+      (define get-args*-env*
+        (lambda (vars types env)
+          (define var-temps (map (lambda (var) (gensym var)) vars))
+          (define new-env
+           (foldl (lambda (var new-temp env)
+                    (cons `(,var . ,new-temp) env))
+                    env vars var-temps))
+         (define new-arg-types (map (lambda (temp type) `(,temp : ,type)) var-temps types))
+         (values new-arg-types new-env)))
       
       (match e
         [`(has-type ,es ,t) `(has-type ,(recur es) ,t)]
@@ -403,16 +416,12 @@
                  env f-temps))
          `(program (type ,t) ,@(map (lambda (def) ((uniquify new-env) def)) fun-defs)
                    ,((uniquify new-env) e))]
-        
+        [`(lambda: ([,vars : ,types] ...) : ,ret-type ,body)
+         (define-values (new-arg-types new-env) (get-args*-env* vars types env))
+         `(lambda: ,new-arg-types : ,ret-type ,((uniquify new-env) body))] 
         [`(define (,fun-name (,vars : ,types) ...) : ,ret-type ,fbody)
-         (define var-temps (map (lambda (var) (gensym var)) vars))
-         (define new-env
-           (foldl (lambda (var new-temp env)
-                    (cons `(,var . ,new-temp) env))
-                  env vars var-temps))
-         (define new-arg-types (map (lambda (temp type) `(,temp : ,type)) var-temps types))
+         (define-values (new-arg-types new-env) (get-args*-env* vars types env))
         `(define (,(recur fun-name) ,@new-arg-types) : ,ret-type ,((uniquify new-env) fbody))]
-         
         [`(,op ,es ...) #:when (or (set-member? primitive-set op)
                                    (set-member? vec-primitive-set op))
                         `(,op ,@(map (lambda (e) (recur e)) es))]
@@ -455,8 +464,119 @@
          `(let ([,x ,rhs]) ,body)]
         [`(define (,fun-name ,args ...) : ,ret-type ,fbody)
          `(define (,fun-name ,@args) : ,ret-type ,(recur fbody))]
+        [`(lambda: ,args : ,ret-type ,body)
+         `(lambda: ,args : ,ret-type ,(recur body))]
         [else
          (error "in reveal-functions, unmatched" e)]))))
+
+(define convert-to-closure
+  (lambda (e)
+
+    (define (collect-vars ast)
+      (match ast
+        [`(has-type ,e ,t)
+         (if (symbol? e) (hash e ast) (collect-vars e))]
+        [(or (? integer?) (? boolean?)) (hash)]
+        [`(function-ref ,f) (hash)]
+        [`(let ([,x ,e]) ,body)
+         (hash-union (collect-vars e) (hash-remove (collect-vars body) x))]
+        [`(if ,cnd ,thn, els)
+         (hash-union (collect-vars cnd) (collect-vars thn) (collect-vars els))]
+        [`(lambda: ([,xs : ,Ts] ...) : ,rT ,body)
+         (define (rm x h) (hash-remove h x))
+         (foldl rm (collect-vars body) xs)]
+        [`(app ,es ...)
+         (apply hash-union (map collect-vars es))]
+        [`(,op ,es ...)
+         (apply hash-union (map collect-vars es))]
+        [else (error 'free-variables "unmatched ~a" e)]))
+
+    (define (rm-from-hash hash var)
+      (hash-remove hash var))
+
+    (match e
+      [`(program (type ,t) ,fun-defs ... ,body)
+       (define-values (new-fun-defs) (map convert-to-closure fun-defs))
+       (define-values (new-body lambda-body) (convert-to-closure body))
+
+       ; (pretty-display new-fun-defs)
+       ; (pretty-display lambda-body)
+
+       `(program (type ,t) ,@(append* new-fun-defs) ,@lambda-body ,new-body)]
+
+      [`(lambda: ,(and args `[,vars : ,types]) ... : ,ret-type ,body)
+       (define lambda-name (gensym 'lambda.))
+       (define all-vars (collect-vars body))
+       (define free-vars (foldl rm-from-hash all-vars vars))
+       (define closure `(vector ,lambda-name ,@(hash->list free-vars)))
+       (define-values (new-body lambda-funcs) (convert-to-closure body))
+       (define let-bindings
+          (foldr (lambda (fvar loc init)
+                    `(let ([,fvar (vector-ref closure ,loc)])
+                        ,init))
+                 new-body free-vars (range 1 (add1 (length free-vars)))))
+       (define top-level-fun
+        `(define (,lambda-name [clos : _] ,@args) : ,ret-type
+                  ,let-bindings))
+
+       (values closure (cons top-level-fun lambda-funcs))]
+      [(? symbol?) (values e '())]
+      [(? integer?) (values e '())]
+      [(? boolean?) (values e '())]
+      [`(function-ref ,id) (values e '())]
+      [`(void) (values e '())]
+      [`(has-type ,e ,t) 
+       (define-values (new-e lambda-e) (convert-to-closure e))
+       (values `(has-type ,new-e ,t) lambda-e)]
+      [`(if ,cnd ,thn ,els)
+       (define-values (new-cnd lambda-cnd) (convert-to-closure cnd))
+       (define-values (new-thn lambda-thn) (convert-to-closure thn))
+       (define-values (new-els lambda-els) (convert-to-closure els))
+       (values `(if ,new-cnd ,new-thn ,new-els)
+               (append lambda-cnd lambda-thn lambda-els))]
+      [`(and ,e1 ,e2)
+       (define-values (new-e1 lambda-e1) (convert-to-closure e1))
+       (define-values (new-e2 lambda-e2) (convert-to-closure e2))
+       (values `(and ,new-e1 ,new-e2)
+               (append lambda-e1 lambda-e2))]
+
+      [`(,op ,es ...) 
+      #:when (or (set-member? vec-primitive-set op)
+                 (set-member? primitive-set op))
+      (define-values (new-es lambda-es) (map2 convert-to-closure es))
+
+      (values `(,op ,@new-es) (append* lambda-es))]
+
+      [`(app ,(and fname `(has-type ,e ,t)) ,es ...)
+      (define-values (new-f lambda-f) (convert-to-closure fname))
+      (define-values (new-es lambda-es) (map2 convert-to-closure es))
+
+      (define temp (gensym 'temp.))
+      (define new-exp
+        `(let ([,temp ,new-f])
+            (app (vector-ref ,temp 0) ,temp ,@new-es)))
+
+      ; (pretty-display "-----------------")
+      ; (pretty-display lambda-f)
+      ; (pretty-display (append* lambda-es))
+
+
+      (values new-exp (append lambda-f (append* lambda-es)))]
+
+      [`(let ([,x ,rhs]) ,body)
+        (define-values (new-rhs lambda-rhs) (convert-to-closure rhs))
+        (define-values (new-body lambda-body) (convert-to-closure body))
+        (values `(let ([,x ,new-rhs]) ,new-body)
+                (append lambda-rhs lambda-body))]
+
+      [`(define (,fun-name ,args ...) : ,ret-type ,fbody)
+      (define-values (new-fbody lambda-fbody) (convert-to-closure fbody))
+      ; (pretty-display "-------")
+      ; (pretty-display lambda-fbody)
+      (cons `(define (,fun-name ,@args) : ,ret-type ,new-fbody)
+              lambda-fbody)]
+      [else
+       (error "in convert-to-closure, unmatched" e)])))
   
 
 (define expose-allocation
@@ -1454,18 +1574,20 @@
            [checked ((type-check '() '()) e)]
            [uniq ((uniquify '()) checked)]           
            [revealed ((reveal-functions (void)) uniq)]
-           [expo (expose-allocation revealed)]
-           [flat ((flatten #t) expo)]
-           [instrs (select-instructions flat)]
-           [liveness ((uncover-live (void)) instrs)]
-           [graph ((build-interference (void) (void) (void) (void)) liveness)]
-           [allocs (allocate-registers graph)]
-           [lower-if (lower-conditionals allocs)]
-           [patched (patch-instructions lower-if)]
-           [x86 (print-x86 patched)]
+           [closure (convert-to-closure revealed)]
+           ;[expo (expose-allocation closure)]
+           ;[flat ((flatten #t) expo)]
+           ;[instrs (select-instructions flat)]
+           ;[liveness ((uncover-live (void)) instrs)]
+           ;[graph ((build-interference (void) (void) (void) (void)) liveness)]
+          ; [allocs (allocate-registers graph)]
+           ;[lower-if (lower-conditionals allocs)]
+           ;[patched (patch-instructions lower-if)]
+           ;[x86 (print-x86 patched)]
            )
      ; (log checked)
-     ; (log uniq)
+     (log uniq)
+     (log closure)
      ; (log revealed)
      ; (log expo)  
      ; (log flat)
@@ -1476,88 +1598,69 @@
      ; (log lower-if)
      ; (log patched)
       ; (log x86)
-      ; 1
+      1
 
-     (write-to-file "test.s" x86)
+     ;(write-to-file "test.s" x86)
     )))
 
-; (run 
-;     '(program
-
-; ))
-
-
-(define convert-to-closure
-  (lambda (e)
-
-    (define orall
-      (lambda (lst)
-        (cond
-          [(null? lst) #f] 
-          [(car lst) #t]
-          [else (orall (cdr lst))])))
-
-    (define occurs-free?
-      (lambda (x exp)
-        (match exp
-          [(? symbol?) (eqv? x exp)]
-          [`(lambda: ([,vars : ,types] ...) : ,ret-type ,body)
-          (and (not (member? vars x))
-               (occurs-free? x body))]
-          [`(,op ,es ...)
-          (or (occurs-free? x op)
-              (orall (map (lambda (e) (occurs-free? x e)) es)))])))
-
-    (define collect-vars
-      (lambda (exp)
-        (define (collector exp vars)
-          (match exp
-            [(? symbol?) (set-add vars exp)]
-            [()]))))
+(run 
+    '(program
+ (define (id [x : Integer]) : Integer x)
+ (id 42)
 
 
-    (match e
-      [`(program (type ,t) ,(and fun-defs `(define (,fun-names ,args ...) : ,rets ,fbody)) ... ,body)
-       
-      ]
-      [`(lambda: ,(and args `[,vars : ,types] ...) : ,ret-type ,body)
-       (define lambda-name (gensym 'lambda.))
-       (define all-vars (collect-vars body))
-       (define free-vars (filter (lambda (var) (occurs-free? var body)) all-vars))
-       (define closure `(vector ,lambda-name ,@free-vars))
-       (define let-bindings
-          (foldl (lambda ())))
 
-       (values `(vector ,lambda-name ,@free-vars)
-               `(define (,lambda-name [clos : _] ,@args) : ,ret-type
-                  (let ([]))))
-      ]
-      [(? symbol?) ]
-      [(? integer?) ]
-      [(? boolean?) ]
-      [`(void) ]
-      [`(has-type ,e ,t) `(has-type ,(recur e) ,t)]
-      [`(if ,(app recur cnd) 
-            ,(app recur thn)
-            ,(app recur els))
-       `(if ,cnd ,thn ,els)]
-      [`(and ,(app recur e1)
-             ,(app recur e2))
-       `(and ,e1 ,e2)]
-      [`(,op ,es ...) #:when (or (set-member? vec-primitive-set op)
-                                 (set-member? primitive-set op))
-                      (define new-es (map recur es))
-                      `(,op ,@new-es)]
-      [`(,(and fname `(has-type ,e ,t)) ,es ...)
-       `(app ,(recur fname) ,@(map recur es))]
-      [`(let ([,x ,(app recur rhs)]) 
-          ,(app recur body))
-       `(let ([,x ,rhs]) ,body)]
-      [`(define (,fun-name ,args ...) : ,ret-type ,fbody)
-       `(define (,fun-name ,@args) : ,ret-type ,(recur fbody))]
-      [else
-       (error "in reveal-functions, unmatched" e)])
 
+
+
+))
+
+
+
+(define interp (new interp-R4))
+(define interp-F (send interp interp-F '()))
+
+(define test-passes
+    (list
+     `("uniquify"                ,(uniquify '())                                   ,interp-scheme)
+     `("reveal-functions"        ,(reveal-functions '())                           ,interp-F)
+     `("convert-to-closures"     ,convert-to-closure                               ,interp-F)
+     ; `("expose allocation"       ,expose-allocation                                ,interp-F)
+     ; `("flatten"                 ,(flatten #f)                                     ,interp-C)
+     ; `("instruction selection"   ,select-instructions                              ,interp-x86)
+     ; `("liveness analysis"       ,(uncover-live (void))                            ,interp-x86)
+     ; `("build interference"      ,(build-interference (void) (void) (void) (void)) ,interp-x86)
+     ; `("allocate register"     ,allocate-registers                                 ,interp-x86) 
+     ; `("lower-conditionals"    ,lower-conditionals                               ,interp-x86)
+     ; `("patch-instructions"     ,patch-instructions                                ,interp-x86)
+     ; `("x86"                    ,print-x86                                          #f)
+     ))
+
+(define suite-list
+  `((0 . ,(range 1 28))
+    (1 . ,(range 1 37))
+    (2 . ,(range 1 21))
+    (3 . ,(range 1 20))
+    (4 . ,(range 0 8))
+    (6 . ,(range 0 10))
+    (7 . ,(range 0 9))
+    ))
+
+(define compiler-list
+  ;; Name           Typechecker                     Compiler-Passes      Initial interpreter   Test-name    Valid suites
+  `(
+    ("conditionals"  ,(type-check (void) (void))    ,test-passes          ,interp-scheme       "s0"         ,(cdr (assq 0 suite-list)))
+    ("conditionals"  ,(type-check (void) (void))    ,test-passes          ,interp-scheme       "s1"         ,(cdr (assq 1 suite-list)))
+    ("conditionals"  ,(type-check (void) (void))    ,test-passes          ,interp-scheme       "s2"         ,(cdr (assq 2 suite-list)))
+    ("conditionals"  ,(type-check (void) (void))    ,test-passes          ,interp-scheme       "s3"         ,(cdr (assq 3 suite-list)))
+    ("conditionals"  ,(type-check (void) (void))    ,test-passes          ,interp-scheme       "s4"         ,(cdr (assq 4 suite-list)))
+    
+    ))
+
+(begin
+   (for ([test compiler-list])
+    (apply interp-tests test))
+   (pretty-display "all passed"))
 
 
 
