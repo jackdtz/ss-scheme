@@ -18,7 +18,7 @@
 
 (define (write-to-file path ss)
   (define out (open-output-file path #:exists 'replace))
-  (pretty-display ss out)
+  ; (pretty-display ss out)
   (close-output-port out))
 
 (define pretty-display-color-map
@@ -491,7 +491,7 @@
          (apply hash-union (map collect-vars es))]
         [else (error 'free-variables "unmatched ~a" e)]))
 
-    (define (rm-from-hash hash var)
+    (define (rm-from-hash var hash)
       (hash-remove hash var))
 
     (match e
@@ -504,11 +504,34 @@
 
        `(program (type ,t) ,@(append* new-fun-defs) ,@lambda-body ,new-body)]
 
-      [`(lambda: ,(and args `[,vars : ,types]) ... : ,ret-type ,body)
+      [`(has-type (app (has-type (function-ref ,fname) ,t1) ,es ...) ,t2)
+       (define-values (new-es lambda-es) (map2 convert-to-closure es))
+       (define-values (closure _) (convert-to-closure `(function-ref ,fname)))
+       (define temp (gensym 'app.))
+       (values `(has-type
+                  (let ([,temp (has-type ,closure (Vector ,t1))])
+                            (has-type
+                              (app (has-type (vector-ref ,temp 0) ,t1) (has-type ,temp (Vector ,t1)) ,@new-es)
+                              ,t2))
+                  ,t2)
+                (append* lambda-es))]
+
+      [`(app (has-type ,(and lambda `(lambda: ,args : ,ret-type ,body)) ,t) ,es ...)
+       (define-values (closure lambda-funcs) (convert-to-closure lambda))
+       (define-values (new-es es-lambdas) (map2 convert-to-closure es))
+       (define temp (gensym 'app.))
+       (values `(has-type
+                  (let ([,temp ,closure])
+                    (app (vector-ref ,temp 0) ,temp ,@new-es))
+                  ,t)
+               (append* `(,lambda-funcs ,@es-lambdas)))]
+
+      [`(lambda: ([,vars : ,types] ...) : ,ret-type ,body)
        (define lambda-name (gensym 'lambda.))
        (define all-vars (collect-vars body))
-       (define free-vars (foldl rm-from-hash all-vars vars))
-       (define closure `(vector ,lambda-name ,@(hash->list free-vars)))
+       (define free-vars (hash->list (foldl rm-from-hash all-vars vars)))
+       (define closure `(vector ,lambda-name ,@free-vars))
+       (define args (map (lambda (var type) `(,var : ,type)) vars types))
        (define-values (new-body lambda-funcs) (convert-to-closure body))
        (define let-bindings
           (foldr (lambda (fvar loc init)
@@ -520,10 +543,12 @@
                   ,let-bindings))
 
        (values closure (cons top-level-fun lambda-funcs))]
+
+
       [(? symbol?) (values e '())]
       [(? integer?) (values e '())]
       [(? boolean?) (values e '())]
-      [`(function-ref ,id) (values e '())]
+      [`(function-ref ,id) (values `(vector ,e) '())]
       [`(void) (values e '())]
       [`(has-type ,e ,t) 
        (define-values (new-e lambda-e) (convert-to-closure e))
@@ -547,21 +572,23 @@
 
       (values `(,op ,@new-es) (append* lambda-es))]
 
-      [`(app ,(and fname `(has-type ,e ,t)) ,es ...)
-      (define-values (new-f lambda-f) (convert-to-closure fname))
-      (define-values (new-es lambda-es) (map2 convert-to-closure es))
-
-      (define temp (gensym 'temp.))
-      (define new-exp
-        `(let ([,temp ,new-f])
-            (app (vector-ref ,temp 0) ,temp ,@new-es)))
-
-      ; (pretty-display "-----------------")
-      ; (pretty-display lambda-f)
-      ; (pretty-display (append* lambda-es))
 
 
-      (values new-exp (append lambda-f (append* lambda-es)))]
+      ; [`(app ,(and fname `(has-type ,e ,t)) ,es ...)
+      ; (define-values (new-f lambda-f) (convert-to-closure fname))
+      ; (define-values (new-es lambda-es) (map2 convert-to-closure es))
+
+      ; (define temp (gensym 'temp.))
+      ; (define new-exp
+      ;   `(let ([,temp ,new-f])
+      ;       (app (vector-ref ,temp 0) ,temp ,@new-es)))
+
+      ; ; (pretty-display "-----------------")
+      ; ; (pretty-display lambda-f)
+      ; ; (pretty-display (append* lambda-es))
+
+
+      ; (values new-exp (append lambda-f (append* lambda-es)))]
 
       [`(let ([,x ,rhs]) ,body)
         (define-values (new-rhs lambda-rhs) (convert-to-closure rhs))
@@ -573,7 +600,7 @@
       (define-values (new-fbody lambda-fbody) (convert-to-closure fbody))
       ; (pretty-display "-------")
       ; (pretty-display lambda-fbody)
-      (cons `(define (,fun-name ,@args) : ,ret-type ,new-fbody)
+      (cons `(define (,fun-name [clos : _] ,@args) : ,ret-type ,new-fbody)
               lambda-fbody)]
       [else
        (error "in convert-to-closure, unmatched" e)])))
@@ -1603,17 +1630,13 @@
      ;(write-to-file "test.s" x86)
     )))
 
-(run 
-    '(program
- (define (id [x : Integer]) : Integer x)
- (id 42)
+; (run 
+;     '(program
 
+;  (define (id [x : Integer]) : Integer x)
+;  (id 42)
 
-
-
-
-
-))
+; ))
 
 
 
