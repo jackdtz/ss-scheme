@@ -472,6 +472,8 @@
 (define convert-to-closure
   (lambda (e)
 
+
+
     (define (collect-vars ast)
       (match ast
         [`(has-type ,e ,t)
@@ -504,9 +506,23 @@
 
        `(program (type ,t) ,@(append* new-fun-defs) ,@lambda-body ,new-body)]
 
+      [`(has-type (function-ref ,id) ,t) (values `(has-type (vector ,e) (Vector ,t)) '())]
+
+      [`(has-type (app (has-type ,(? symbol? f) ,t1) ,es ...) ,t2)
+
+        (define-values (new-es lambda-es) (map2 convert-to-closure es))
+        (define temp (gensym 'app.))
+        (values `(has-type
+                    (let ([,temp (has-type (vector ,f) (Vector ,t1))])
+                      (has-type
+                        (app (has-type (vector-ref ,temp 0) ,t1) (has-type ,temp (Vector ,t1)) ,@new-es)
+                        ,t2))
+                    ,t2)
+                (append* lambda-es))]
+
       [`(has-type (app (has-type (function-ref ,fname) ,t1) ,es ...) ,t2)
        (define-values (new-es lambda-es) (map2 convert-to-closure es))
-       (define-values (closure _) (convert-to-closure `(function-ref ,fname)))
+       (define-values (closure _) (convert-to-closure `(has-type (function-ref ,fname) ,t1)))
        (define temp (gensym 'app.))
        (values `(has-type
                   (let ([,temp (has-type ,closure (Vector ,t1))])
@@ -548,7 +564,7 @@
       [(? symbol?) (values e '())]
       [(? integer?) (values e '())]
       [(? boolean?) (values e '())]
-      [`(function-ref ,id) (values `(vector ,e) '())]
+      
       [`(void) (values e '())]
       [`(has-type ,e ,t) 
        (define-values (new-e lambda-e) (convert-to-closure e))
@@ -583,18 +599,8 @@
       ;   `(let ([,temp ,new-f])
       ;       (app (vector-ref ,temp 0) ,temp ,@new-es)))
 
-      ; ; (pretty-display "-----------------")
-      ; ; (pretty-display lambda-f)
-      ; ; (pretty-display (append* lambda-es))
-
-
       ; (values new-exp (append lambda-f (append* lambda-es)))]
 
-      ; [`(let ([,x (has-type (function-ref ,fname) ,t)]) ,body)
-      ;   (define-values (new-rhs lambda-rhs) (convert-to-closure rhs))
-      ;   (define-values (new-body lambda-body) (convert-to-closure body))
-      ;   (values `(let ([,x ,new-rhs]) ,new-body)
-      ;           (append lambda-rhs lambda-body))]
 
       [`(let ([,x ,rhs]) ,body)
         (define-values (new-rhs lambda-rhs) (convert-to-closure rhs))
@@ -1607,7 +1613,7 @@
            [checked ((type-check '() '()) e)]
            [uniq ((uniquify '()) checked)]           
            [revealed ((reveal-functions (void)) uniq)]
-           ; [closure (convert-to-closure revealed)]
+           [closure (convert-to-closure revealed)]
            ;[expo (expose-allocation closure)]
            ;[flat ((flatten #t) expo)]
            ;[instrs (select-instructions flat)]
@@ -1620,8 +1626,8 @@
            )
      ; (log checked)
      (log uniq)
-     ; (log closure)
      (log revealed)
+     (log closure)
      ; (log expo)  
      ; (log flat)
      ; (log instrs)
@@ -1640,8 +1646,7 @@
     '(program
 
  (define (id [x : Integer]) : Integer x)
- (let ([f id])
-   (f 42))
+ (id 42)
 
 ))
 
@@ -1687,10 +1692,10 @@
     
     ))
 
-(begin
-   (for ([test compiler-list])
-    (apply interp-tests test))
-   (pretty-display "all passed"))
+; (begin
+;    (for ([test compiler-list])
+;     (apply interp-tests test))
+;    (pretty-display "all passed"))
 
 
 
