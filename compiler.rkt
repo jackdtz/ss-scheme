@@ -590,6 +590,12 @@
 
       ; (values new-exp (append lambda-f (append* lambda-es)))]
 
+      ; [`(let ([,x (has-type (function-ref ,fname) ,t)]) ,body)
+      ;   (define-values (new-rhs lambda-rhs) (convert-to-closure rhs))
+      ;   (define-values (new-body lambda-body) (convert-to-closure body))
+      ;   (values `(let ([,x ,new-rhs]) ,new-body)
+      ;           (append lambda-rhs lambda-body))]
+
       [`(let ([,x ,rhs]) ,body)
         (define-values (new-rhs lambda-rhs) (convert-to-closure rhs))
         (define-values (new-body lambda-body) (convert-to-closure body))
@@ -1601,7 +1607,7 @@
            [checked ((type-check '() '()) e)]
            [uniq ((uniquify '()) checked)]           
            [revealed ((reveal-functions (void)) uniq)]
-           [closure (convert-to-closure revealed)]
+           ; [closure (convert-to-closure revealed)]
            ;[expo (expose-allocation closure)]
            ;[flat ((flatten #t) expo)]
            ;[instrs (select-instructions flat)]
@@ -1614,8 +1620,8 @@
            )
      ; (log checked)
      (log uniq)
-     (log closure)
-     ; (log revealed)
+     ; (log closure)
+     (log revealed)
      ; (log expo)  
      ; (log flat)
      ; (log instrs)
@@ -1630,13 +1636,14 @@
      ;(write-to-file "test.s" x86)
     )))
 
-; (run 
-;     '(program
+(run 
+    '(program
 
-;  (define (id [x : Integer]) : Integer x)
-;  (id 42)
+ (define (id [x : Integer]) : Integer x)
+ (let ([f id])
+   (f 42))
 
-; ))
+))
 
 
 
