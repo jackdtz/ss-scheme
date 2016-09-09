@@ -24,7 +24,8 @@
 (define passes
  (list
   `("uniquify"              ,(uniquify '())                                   ,interp-scheme)
-  `("reveal-functions"       ,(reveal-functions '())                         ,interp-F)
+  `("reveal-functions"       ,(reveal-functions '())                          ,interp-F)
+  `("convert-to-closures"     ,convert-to-closure                             ,interp-F)
   `("expose allocation"     ,expose-allocation                                ,interp-F)
   `("flatten"               ,(flatten #t)                                     ,interp-C)
   `("instruction selection" ,select-instructions                              ,interp-x86)
