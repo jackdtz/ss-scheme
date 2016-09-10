@@ -19,6 +19,11 @@
 ;; This (dynamically scoped) parameter is used for goto
 (define program (make-parameter '()))
 
+(define (write-to-file path ss)
+  (define out (open-output-file path #:exists 'replace))
+  (pretty-display ss out)
+  (close-output-port out))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Interpreters for R0: integer arithmetic and 'let'
 
@@ -128,6 +133,8 @@
     (define/public (interp-x86-exp env)
       (lambda (ast)
         (vomit "interp-x86-exp" ast)
+
+
   (match ast
      [(or `(var ,x) `(reg ,x))
             (lookup (get-name ast) env)]
@@ -141,7 +148,8 @@
       (lambda (ast)
         (when (pair? ast)
           (vomit "R0/interp-x86" (car ast)))
-        (match ast
+
+    (match ast
      ['() env]
      [`((callq read_int) . ,ss) 
       ((interp-x86 (cons (cons 'rax (read)) env)) ss)]
@@ -163,7 +171,11 @@
       [x (get-name d)]
       [f (interp-x86-op unary-op)])
         ((interp-x86 (cons (cons x (f d)) env)) ss))]
-     [else (error "no match in interp-x86 S0 for " ast)]
+     [else 
+
+
+
+      (error "no match in interp-x86 S0 for " ast)]
      )))
 
     )) ;; class interp-R0

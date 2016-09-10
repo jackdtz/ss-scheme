@@ -18,7 +18,7 @@
 
 (define (write-to-file path ss)
   (define out (open-output-file path #:exists 'replace))
-  ; (pretty-display ss out)
+  (pretty-display ss out)
   (close-output-port out))
 
 (define pretty-display-color-map
@@ -506,7 +506,7 @@
        `(program (type ,t) ,@new-fun-defs ,@(append* fun-lambda) ,@lambda-body ,new-body)]
 
 
-      [`(has-type (function-ref ,f) ,t) (values `(has-type (vector ,e) _) '())]
+      [`(has-type (function-ref ,f) ,t) (values `(has-type (vector ,e) (Vector _)) '())]
       [(or (? boolean?) (? integer?) (? symbol?)) (values e '())]
       [`(read) (values e '())]
       [`(void) (values e '())]
@@ -518,8 +518,8 @@
               `(,@cnd-lambda ,@thn-lambda ,@els-lambda))]
 
 
-      [`(has-type (app ,f ,es ...) ,t)
-      (define-values (new-f f-fun) (convert-to-closure f))
+      [`(has-type (app (has-type ,f ,f-type) ,es ...) ,t)
+      (define-values (new-f f-fun) (convert-to-closure `(has-type ,f ,f-type)))
       (define-values (new-es es-funs) (map2 convert-to-closure es))
       (define temp (gensym 'app.))
       (match new-f
@@ -529,7 +529,7 @@
               (let ([,temp ,new-f])
                 (has-type 
                   (app 
-                    (has-type (vector-ref (has-type ,temp ,t^) (has-type 0 Integer)) _)
+                    (has-type (vector-ref (has-type ,temp ,t^) (has-type 0 Integer)) ,f-type)
                     (has-type ,temp ,t^)
                     ,@new-es)
                   ,t))
@@ -541,14 +541,15 @@
        (define all-vars (collect-vars body))
        (define typed-free-vars (map cdr (hash->list (foldl rm-from-hash all-vars vars))))
        (define free-vars (map cadr typed-free-vars))
+       (define types (map caddr typed-free-vars))
 
        (define-values (new-body lambda-body) (convert-to-closure body))
 
        (define let-bindings
-        (foldr (lambda (fv index init)
-                  `(let ([,fv (has-type (vector-ref (has-type clos _) (has-type ,index Integer)) _)])
+        (foldr (lambda (fv type index init)
+                  `(let ([,fv (has-type (vector-ref (has-type clos _) (has-type ,index Integer)) ,type)])
                      ,init))
-              new-body free-vars (range 1 (add1 (length typed-free-vars)))))
+              new-body free-vars types (range 1 (add1 (length typed-free-vars)))))
 
        (define fname (gensym 'lambda.))
        (define args (map (lambda (var type) `(,var : ,type)) vars types))
@@ -557,7 +558,7 @@
          `(define (,fname [clos : _] ,@args) : ,ret-type
             ,let-bindings))
 
-       (values `(has-type (vector (has-type (function-ref ,fname) _) ,@typed-free-vars) _) (cons top-level-def lambda-body))]
+       (values `(has-type (vector (has-type (function-ref ,fname) ,t) ,@typed-free-vars) (Vector _)) (cons top-level-def lambda-body))]
 
       [`(has-type ,e ,t)
        (define-values (new-e lambda-e) (convert-to-closure e))
@@ -1610,20 +1611,20 @@
            [uniq ((uniquify '()) checked)]           
            [revealed ((reveal-functions (void)) uniq)]
            [closure (convert-to-closure revealed)]
-           [expo (expose-allocation closure)]
-           [flat ((flatten #t) expo)]
-           ;[instrs (select-instructions flat)]
-           ;[liveness ((uncover-live (void)) instrs)]
-           ;[graph ((build-interference (void) (void) (void) (void)) liveness)]
-          ; [allocs (allocate-registers graph)]
+           ; [expo (expose-allocation closure)]
+           ; [flat ((flatten #t) expo)]
+           ; [instrs (select-instructions flat)]
+           ; [liveness ((uncover-live (void)) instrs)]
+           ; [graph ((build-interference (void) (void) (void) (void)) liveness)]
+           ; [allocs (allocate-registers graph)]
            ;[lower-if (lower-conditionals allocs)]
            ;[patched (patch-instructions lower-if)]
            ;[x86 (print-x86 patched)]
            )
      ; (log checked)
      ; (log uniq)
-     (log revealed)
-     (log closure)
+     ; (log revealed)
+     ; (log closure)
      ; (log expo)  
      ; (log flat)
      ; (log instrs)
@@ -1633,14 +1634,85 @@
      ; (log lower-if)
      ; (log patched)
       ; (log x86)
-      1
+      ; 1
 
-     ;(write-to-file "test.s" x86)
+     (write-to-file "test.s" closure)
     )))
 
-(run 
+#;(run 
  '(program
-      ((lambda: ([x : Integer]) : Integer x) 42)
+
+(define (minus [m : Integer] [n : Integer]) : Integer
+  (+ m (- n)))
+
+(define (z [i : Integer]) : (Vector Integer)
+  (if (eq? i 0)
+      (vector 42)
+      (let ([junk (vector (vector 1) (vector 2) (vector 3) (vector 4) (vector 5))])
+        (let ([garbage (vector -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1)])
+          (let ([more (vector junk garbage junk garbage junk garbage junk garbage)])
+            (z (minus i 1)))))))
+
+(define (o [i : Integer] [v : (Vector Integer)]) : (Vector (Vector Integer))
+  (if (eq? i 0)
+      (vector v)
+      (let ([junk (vector (vector 1) (vector 2) (vector 3) (vector 4) (vector 5))])
+        (let ([garbage (vector -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1)])
+          (let ([more (vector junk garbage junk garbage junk garbage junk garbage)])
+            (o (minus i 1) v))))))
+
+(define (t [i : Integer] [v : (Vector (Vector Integer))])
+  : (Vector (Vector (Vector Integer)))
+  (if (eq? i 0)
+      (vector v)
+      (let ([junk (vector (vector 1) (vector 2) (vector 3) (vector 4) (vector 5))])
+        (let ([garbage (vector -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1)])
+          (let ([more (vector junk garbage junk garbage junk garbage junk garbage)])
+            (t (minus i 1) v))))))
+
+(define (h [i : Integer] [v : (Vector (Vector (Vector Integer)))])
+  : (Vector (Vector (Vector (Vector Integer))))
+  (if (eq? i 0)
+      (vector v)
+      (let ([junk (vector (vector 1) (vector 2) (vector 3) (vector 4) (vector 5))])
+        (let ([garbage (vector -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1)])
+          (let ([more (vector junk garbage junk garbage junk garbage junk garbage)])
+            (h (minus i 1) v))))))
+
+(define (f [i : Integer] [v : (Vector (Vector (Vector (Vector Integer))))])
+  : (Vector (Vector (Vector (Vector (Vector Integer)))))
+  (if (eq? i 0)
+      (vector v)
+      (let ([junk (vector (vector 1) (vector 2) (vector 3) (vector 4) (vector 5))])
+        (let ([garbage (vector -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1)])
+          (let ([more (vector junk garbage junk garbage junk garbage junk garbage)])
+            (f (minus i 1) v))))))
+
+(define (e [i : Integer] [v : (Vector (Vector (Vector (Vector (Vector Integer)))))])
+  : (Vector (Vector (Vector (Vector (Vector (Vector Integer))))))
+  (if (eq? i 0)
+      (vector v)
+      (let ([junk (vector (vector 1) (vector 2) (vector 3) (vector 4) (vector 5))])
+        (let ([garbage (vector -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1)])
+          (let ([more (vector junk garbage junk garbage junk garbage junk garbage)])
+            (e (minus i 1) v))))))
+
+
+(vector-ref
+ (vector-ref
+  (vector-ref
+   (vector-ref
+    (vector-ref
+     (vector-ref
+      (e 20 (f 20 (h 20 (t 20 (o 20 (z 1))))))
+      0)
+     0)
+    0)
+   0)
+  0)
+ 0)
+
+
 
 
 ))
@@ -1657,13 +1729,13 @@
      `("convert-to-closures"     ,convert-to-closure                               ,interp-F)
      `("expose allocation"       ,expose-allocation                                ,interp-F)
      `("flatten"                 ,(flatten #f)                                     ,interp-C)
-     ; `("instruction selection"   ,select-instructions                              ,interp-x86)
-     ; `("liveness analysis"       ,(uncover-live (void))                            ,interp-x86)
-     ; `("build interference"      ,(build-interference (void) (void) (void) (void)) ,interp-x86)
-     ; `("allocate register"     ,allocate-registers                                 ,interp-x86) 
-     ; `("lower-conditionals"    ,lower-conditionals                               ,interp-x86)
-     ; `("patch-instructions"     ,patch-instructions                                ,interp-x86)
-     ; `("x86"                    ,print-x86                                          #f)
+     `("instruction selection"   ,select-instructions                              ,interp-x86)
+     `("liveness analysis"       ,(uncover-live (void))                            ,interp-x86)
+     `("build interference"      ,(build-interference (void) (void) (void) (void)) ,interp-x86)
+     `("allocate register"       ,allocate-registers                               ,interp-x86) 
+     `("lower-conditionals"      ,lower-conditionals                               ,interp-x86)
+     `("patch-instructions"      ,patch-instructions                               ,interp-x86)
+     `("x86"                   ,print-x86                                        #f)
      ))
 
 (define suite-list
@@ -1691,6 +1763,7 @@
    (for ([test compiler-list])
     (apply interp-tests test))
    (pretty-display "all passed"))
+
 
 
 

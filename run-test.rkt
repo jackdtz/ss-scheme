@@ -23,18 +23,18 @@
 
 (define passes
  (list
-  `("uniquify"              ,(uniquify '())                                   ,interp-scheme)
-  `("reveal-functions"       ,(reveal-functions '())                          ,interp-F)
-  `("convert-to-closures"     ,convert-to-closure                             ,interp-F)
-  `("expose allocation"     ,expose-allocation                                ,interp-F)
-  `("flatten"               ,(flatten #t)                                     ,interp-C)
-  `("instruction selection" ,select-instructions                              ,interp-x86)
-  `("liveness analysis"     ,(uncover-live (void))                            ,interp-x86)
-  `("build interference"    ,(build-interference (void) (void) (void) (void)) ,interp-x86)
-  `("allocate register"     ,allocate-registers                               ,interp-x86) 
-  `("lower-conditionals"    ,lower-conditionals                               ,interp-x86)
+  `("uniquify"              ,(uniquify '())                                    ,interp-scheme)
+  `("reveal-functions"      ,(reveal-functions '())                            ,interp-F)
+  ; `("convert-to-closures"   ,convert-to-closure                                ,interp-F)
+  `("expose allocation"     ,expose-allocation                                 ,interp-F)
+  `("flatten"               ,(flatten #t)                                      ,interp-C)
+  `("instruction selection" ,select-instructions                               ,interp-x86)
+  `("liveness analysis"     ,(uncover-live (void))                             ,interp-x86)
+  `("build interference"    ,(build-interference (void) (void) (void) (void))  ,interp-x86)
+  `("allocate register"     ,allocate-registers                                ,interp-x86) 
+  `("lower-conditionals"    ,lower-conditionals                                ,interp-x86)
   `("patch-instructions"    ,patch-instructions                                ,interp-x86)
-  `("x86"                   ,print-x86                                          #f)
+  `("x86"                   ,print-x86                                         #f)
  ))
 
 ;; I have made the original run-tests more programmatic so that we
@@ -48,7 +48,7 @@
 ;; running and testing them.
 (define compiler-list
   ;; Name           Typechecker                   Compiler-Passes      Initial interpreter  Valid suites
- `(("compiler"     ,(type-check (void) (void))    ,passes              ,interp-scheme          (0 1 2 3))
+ `(("compiler"     ,(type-check (void) (void))    ,passes              ,interp-scheme          (3))
   ; `(("conditionals"  ,#f                       ,passes               ,interp-scheme       "s2"         ,(cdr (assq 0 suite-list)))
     ))
 
