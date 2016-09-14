@@ -4,7 +4,7 @@
 (require "compiler.rkt")
 (require "utilities/runtime-config.rkt")
 
-(define interp (new interp-R3))
+(define interp (new interp-R4))
 (define interp-F (send interp interp-F '()))
 
 
@@ -25,7 +25,7 @@
  (list
   `("uniquify"              ,(uniquify '())                                    ,interp-scheme)
   `("reveal-functions"      ,(reveal-functions '())                            ,interp-F)
-  ; `("convert-to-closures"   ,convert-to-closure                                ,interp-F)
+  `("convert-to-closures"   ,convert-to-closure                                ,interp-F)
   `("expose allocation"     ,expose-allocation                                 ,interp-F)
   `("flatten"               ,(flatten #t)                                      ,interp-C)
   `("instruction selection" ,select-instructions                               ,interp-x86)
@@ -48,7 +48,7 @@
 ;; running and testing them.
 (define compiler-list
   ;; Name           Typechecker                   Compiler-Passes      Initial interpreter  Valid suites
- `(("compiler"     ,(type-check (void) (void))    ,passes              ,interp-scheme          (3))
+ `(("compiler"     ,(type-check (void) (void))    ,passes              ,interp-scheme          (0 1 2 3))
   ; `(("conditionals"  ,#f                       ,passes               ,interp-scheme       "s2"         ,(cdr (assq 0 suite-list)))
     ))
 

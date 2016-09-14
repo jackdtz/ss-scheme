@@ -1,5 +1,11 @@
-A compiler compiles a subset of scheme to x86 assembly language
+This compiler implements a Scheme-like statically-typed programming language.
 
-The compiler is written in Racket
+It currently supports:
+
+- Function
+- Lambda function (lexically-scoped funtion)
+- Integer, Boolean, Vector type
+- Garbage collection
+
 
 
