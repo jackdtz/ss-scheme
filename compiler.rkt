@@ -536,7 +536,8 @@
        `(program (type ,t) ,@new-fun-defs ,@(append* fun-lambda) ,@lambda-body ,new-body)]
 
 
-      [`(has-type (function-ref ,f) ,t) (values `(has-type (vector ,e) (Vector _)) '())]
+      [`(has-type (function-ref ,f) ,t) 
+       (values `(has-type (vector (has-type (function-ref ,f) _)) (Vector _)) '())]
       [(or (? boolean?) (? integer?) (? symbol?)) (values e '())]
       [`(read) (values e '())]
       [`(void) (values e '())]
@@ -559,7 +560,7 @@
               (let ([,temp ,new-f])
                 (has-type 
                   (app 
-                    (has-type (vector-ref (has-type ,temp ,t^) (has-type 0 Integer)) ,f-type)
+                    (has-type (vector-ref (has-type ,temp ,t^) (has-type 0 Integer)) _)
                     (has-type ,temp ,t^)
                     ,@new-es)
                   ,t))
@@ -593,7 +594,7 @@
          `(define (,fname [,clos : _] ,@args) : ,ret-type
             ,let-bindings))
 
-       (values `(has-type (vector (has-type (function-ref ,fname) ,t) ,@typed-free-vars) (Vector _ ,@free-var-types)) 
+       (values `(has-type (vector (has-type (function-ref ,fname) _) ,@typed-free-vars) (Vector _ ,@free-var-types)) 
                (cons top-level-def lambda-body))]
 
       [`(has-type ,e ,t)
@@ -1342,7 +1343,7 @@
             (define home
               (cond [(< var-color-index reg-len) 
                      `(reg ,(vector-ref general-registers var-color-index))]
-                    [(is-vector? type)
+                    [(root-type? type)
                      (define i num-of-root-spill)
                      (set! num-of-root-spill (add1 i))
                      `(deref ,rootstack-reg
@@ -1680,9 +1681,9 @@
      ; (log lower-if)
      ; (log patched)
       ; (log x86)
-      1
+      ; 1
 
-     ; (write-to-file "test.s" x86)
+     (write-to-file "test.s" x86)
     )))
 
 (run 
