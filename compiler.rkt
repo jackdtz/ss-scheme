@@ -7,6 +7,12 @@
 
 (provide (all-defined-out))
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; r15: rootstack pointer
+;; r11: - current memory space that is free.
+;;      - vector's starting address
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; bebug flags
@@ -14,7 +20,7 @@
 
 
 (define debug-flag #f)
-(define log-file "test.s")
+(define log-file "root-type-log.s")
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; utilities for the whole compiler
@@ -25,7 +31,8 @@
     (string->symbol (string-replace (symbol->string f-name) "-" "_"))))
 
 (define (write-to-file path ss [title ""])
-  (define out (open-output-file path #:exists 'replace))
+  (define mode (if debug-flag 'append 'replace))
+  (define out (open-output-file path #:exists mode))
   (pretty-display title out)
   (pretty-display ss out)
   (pretty-display (newline) out)
@@ -643,14 +650,10 @@
       (values `(vector-set! ,new-vec ,new-ind ,new-val)
               `(,@vec-lambda ,@ind-lambda ,@val-lambda))]
 
-
       [else (error "convert-to-closure could not match " e)]
+       
 
-
-
-       )))
-
-
+    )))
   
 
 (define expose-allocation
@@ -986,11 +989,10 @@
                       [bits 0])
              (cond [(null? lst) bits]
                    [else
-                    (let ([is-vector-bit (match (car lst)
-                                          [`(Vector ,tys ...) 1]
-                                          [else 0])])
+                    (let ([is-roottype-bit
+                            (if (root-type? (car lst)) 1 0)])
                       (loop (cdr lst)
-                            (bitwise-ior (arithmetic-shift bits 1) is-vector-bit)))]))
+                            (bitwise-ior (arithmetic-shift bits 1) is-roottype-bit)))]))
            7))
        (define tag (bitwise-ior ptr-mask-bits length-bits not-forwading-bit))
        `((movq (global-value free_ptr) ,new-lhs)
@@ -1344,6 +1346,7 @@
               (cond [(< var-color-index reg-len) 
                      `(reg ,(vector-ref general-registers var-color-index))]
                     [(root-type? type)
+                    ; [(is-vector? type) 
                      (define i num-of-root-spill)
                      (set! num-of-root-spill (add1 i))
                      `(deref ,rootstack-reg
@@ -1408,9 +1411,12 @@
       [`(program (,vars-types ,graph ,mgraph) (type ,t) (defines ,fun-defs ...) ,instrs ...)
        (define-values (homes stack-size root-size color-map) (helper graph mgraph vars-types))
        ;; debug
-       (cond [debug-flag (pretty-display-color-map color-map "color-map:")
+       (cond [debug-flag (write-to-file log-file "Main program:\n")
+                         (pretty-display-color-map color-map "color-map:")
                          (pretty-display-color-map homes "homes:")
                          (pretty-display-inter-graph graph "interference:")])
+
+       ; (write-to-file "homes-vector.s" homes)
 
        `(program (,stack-size ,root-size) (type ,t)
                  (defines ,@(map allocate-registers fun-defs))
@@ -1418,6 +1424,10 @@
       [`(define (,fname) ,num-params (,vars-types ,max-stack-args ,graph ,mgraph) ,instrs ...)
        (define-values (homes stack-size root-size color-map) (helper graph mgraph vars-types))
 
+       (cond [debug-flag (write-to-file log-file (format "~a:\n" fname))
+                         (pretty-display-color-map color-map "color-map:")
+                         (pretty-display-color-map homes "homes:")
+                         (pretty-display-inter-graph graph "interference:")])
 
        
        (define adjust-stack-size
@@ -1446,8 +1456,7 @@
       [`(if (,cmp-op ,e1 ,e2) ,thns ,elss)
        (define random-int (random 100000000))
        (let ([thenlabel (append-number 'then. random-int)]
-             [elselabel (append-number 'else. random-int)]
-             [endlabel (append-number 'end. random-int)])
+             [endlabel (append-number 'next. random-int)])
        `((cmpq ,e2 ,e1)
          (jmp-if ,(cmp-op->instr cmp-op) ,thenlabel)
          ,@(append* (map lower-conditionals elss))
@@ -1681,22 +1690,26 @@
      ; (log lower-if)
      ; (log patched)
       ; (log x86)
-      ; 1
+      1
 
-     (write-to-file "test.s" x86)
+     (define target x86)
+     ; (write-to-file "test1.s" target)
+     (write-to-file "x86-roottype.s" target)
     )))
 
-(run 
+#;(run 
  '(program
 
-(define (f [x : Integer]) : (Integer -> Integer)
-   (let ([y 4])
-      (lambda: ([z : Integer]) : Integer
-   (+ x (+ y z)))))
 
-(let ([g (f 5)])
-  (let ([h (f 3)])
-    (+ (g 11) (h 15))))
+(define (id [x : Integer]) : Integer x)
+
+(define (f [n : Integer] [clos : (Vector (Integer -> Integer) (Vector Integer))]) : Integer
+  (if (eq? n 100)
+      ((vector-ref clos 0) (vector-ref (vector-ref clos 1) 0))
+      (f (+ n 1) (vector (vector-ref clos 0) (vector-ref clos 1)))))
+
+(f 94 (vector id (vector 42)))
+
 
 ))
 

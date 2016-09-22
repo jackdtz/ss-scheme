@@ -136,16 +136,23 @@ void collect(int64_t** rootstack_ptr, uint64_t bytes_requested)
   assert(initialized);
 
 
-  printf("rootstack_ptr: %" PRId64 "\t rootstack_begin: %" PRId64 "\n", (long long)rootstack_ptr, (long long)rootstack_begin);
+  printf("rootstack_ptr: %" PRId64 "\t rootstack_begin: %" PRId64 "\t rootstack_end: %" PRId64 "\n", 
+        (long long)rootstack_ptr, (long long)rootstack_begin, (long long)rootstack_end);
   assert(rootstack_ptr >= rootstack_begin);
   assert(rootstack_ptr < rootstack_end);
   
 #ifndef NDEBUG  
   // All pointers in the rootstack point to fromspace
-  for (unsigned int i = 0; rootstack_begin + i < rootstack_ptr; i++){
+  unsigned int length = rootstack_ptr - rootstack_begin;
+  for (unsigned int i = 0; i < length; i++){
+  // for (unsigned int i = 0; rootstack_begin + i < rootstack_ptr; i++){
     int64_t* root = rootstack_begin[i];
     if (is_ptr(root)) {
       int64_t* a_root = to_ptr(root);
+
+      if (!(fromspace_begin <= a_root && a_root < fromspace_end)) {
+        printf("a_root: %" PRId64 ", it's content: %" PRId64"\n", (long long)a_root, (long long)*a_root);
+      }
       assert(fromspace_begin <= a_root && a_root < fromspace_end);
     }
   }
